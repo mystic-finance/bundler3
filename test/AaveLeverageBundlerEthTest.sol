@@ -2,24 +2,24 @@
 pragma solidity ^0.8.0;
 
 import {ErrorsLib} from "../src/libraries/ErrorsLib.sol";
-import {AaveLeverageBundler} from "../src/calls/AaveLeverageBundler.sol";
-import {IAaveAdapter} from "../src/interfaces/IAaveAdapter.sol";
+import {MysticLeverageBundler} from "../src/calls/MysticLeverageBundler.sol";
+import {IMysticAdapter} from "../src/interfaces/IMysticAdapter.sol";
 import {IMaverickV2Pool} from "../src/interfaces/IMaverickV2Pool.sol";
 import {IMaverickV2Factory} from "../src/interfaces/IMaverickV2Factory.sol";
 import {IMaverickV2Quoter} from "../src/interfaces/IMaverickV2Quoter.sol";
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IBundler3, Call} from "../src/interfaces/IBundler3.sol";
-import {AaveAdapter} from "src/adapters/AaveAdapter.sol";
+import {MysticAdapter} from "src/adapters/MysticAdapter.sol";
 import {Bundler3, Call} from "../src/Bundler3.sol";
 import "../lib/forge-std/src/Test.sol";
 import "./helpers/mocks/ERC20Mock.sol";
 import {ICreditDelegationToken} from "../src/interfaces/ICreditDelegationToken.sol";
 import {MaverickSwapAdapter} from "../src/adapters/MaverickAdapter.sol";
-import {IAaveV3 as IPool, ReserveDataMap as ReserveData} from "../src/interfaces/IAaveV3.sol";
+import {IMysticV3 as IPool, ReserveDataMap as ReserveData} from "../src/interfaces/IMysticV3.sol";
 
-contract AaveLeverageBundlerElixirTest is Test {
-    AaveLeverageBundler internal leverageBundler;
-    AaveAdapter internal aaveAdapterMock;
+contract MysticLeverageBundlerElixirTest is Test {
+    MysticLeverageBundler internal leverageBundler;
+    MysticAdapter internal mysticAdapterMock;
     MaverickSwapAdapter internal maverickAdapterMock;
     address internal maverickFactoryMock;
     address internal maverickQuoterMock;
@@ -58,15 +58,15 @@ contract AaveLeverageBundlerElixirTest is Test {
         bundler3 = new Bundler3();
         
         // Create mock contracts
-        aaveAdapterMock = new AaveAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
+        mysticAdapterMock = new MysticAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
         maverickFactoryMock = 0x056A588AfdC0cdaa4Cab50d8a4D2940C5D04172E;
         maverickQuoterMock = 0xf245948e9cf892C351361d298cc7c5b217C36D82;
         maverickAdapterMock = new MaverickSwapAdapter(maverickFactoryMock, maverickQuoterMock);
         
         // Deploy leverage bundler
-        leverageBundler = new AaveLeverageBundler(
+        leverageBundler = new MysticLeverageBundler(
             address(bundler3), 
-            address(aaveAdapterMock), 
+            address(mysticAdapterMock), 
             address(maverickAdapterMock)
         );
         deal(address(collateralToken), USER, 100 * INITIAL_COLLATERAL);
@@ -74,12 +74,12 @@ contract AaveLeverageBundlerElixirTest is Test {
         
         // Approve tokens
         vm.startPrank(USER);
-        collateralToken.approve(address(aaveAdapterMock), type(uint256).max);
-        borrowToken.approve(address(aaveAdapterMock), type(uint256).max);
-        ICreditDelegationToken(0x11bd44bab4FdeD37D0a2dEEeBC554406ad68552D).approveDelegation(address(aaveAdapterMock), type(uint128).max);
-        ICreditDelegationToken(0xF7a8921211913c43108D34277F0Be561b3C5392A).approveDelegation(address(aaveAdapterMock), type(uint128).max);
-        IERC20(0x744dcD914b090b1D5b78469a3e6336547B507b97).approve(address(aaveAdapterMock), type(uint128).max);
-        IERC20(0xd1a7183708EF9706F3dD2d51B27a7e02a70F30fa).approve(address(aaveAdapterMock), type(uint128).max);
+        collateralToken.approve(address(mysticAdapterMock), type(uint256).max);
+        borrowToken.approve(address(mysticAdapterMock), type(uint256).max);
+        ICreditDelegationToken(0x11bd44bab4FdeD37D0a2dEEeBC554406ad68552D).approveDelegation(address(mysticAdapterMock), type(uint128).max);
+        ICreditDelegationToken(0xF7a8921211913c43108D34277F0Be561b3C5392A).approveDelegation(address(mysticAdapterMock), type(uint128).max);
+        IERC20(0x744dcD914b090b1D5b78469a3e6336547B507b97).approve(address(mysticAdapterMock), type(uint128).max);
+        IERC20(0xd1a7183708EF9706F3dD2d51B27a7e02a70F30fa).approve(address(mysticAdapterMock), type(uint128).max);
         vm.stopPrank();
     }
     
@@ -89,7 +89,7 @@ contract AaveLeverageBundlerElixirTest is Test {
      * @return aToken The aToken address
      * @return vToken The debt token address
      */
-    function getAaveTokens(address asset) internal view returns (address aToken, address vToken) {
+    function getMysticTokens(address asset) internal view returns (address aToken, address vToken) {
         ReserveData memory reserveData = IPool(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0)).getReserveData(asset);
         aToken = reserveData.aTokenAddress;
         vToken = reserveData.variableDebtTokenAddress;
@@ -108,19 +108,19 @@ contract AaveLeverageBundlerElixirTest is Test {
         data.totalBorrows = leverageBundler.totalBorrows(asset);
         data.totalCollaterals = leverageBundler.totalCollaterals(collateralAsset);
         
-        (address aToken,) = getAaveTokens(collateralAsset);
+        (address aToken,) = getMysticTokens(collateralAsset);
         if (aToken != address(0)) {
             data.aTokenBalance = IERC20(aToken).balanceOf(user);
         }
         
-        (, address borrowVToken) = getAaveTokens(asset);
+        (, address borrowVToken) = getMysticTokens(asset);
         if (borrowVToken != address(0)) {
             data.vTokenBalance = IERC20(borrowVToken).balanceOf(user);
         }
         
         data.userTokenBalance = IERC20(collateralAsset).balanceOf(user);
         data.bundlerTokenBalance = IERC20(collateralAsset).balanceOf(address(leverageBundler));
-        data.adapterTokenBalance = IERC20(collateralAsset).balanceOf(address(aaveAdapterMock));
+        data.adapterTokenBalance = IERC20(collateralAsset).balanceOf(address(mysticAdapterMock));
     }
 
     /**
@@ -133,9 +133,9 @@ contract AaveLeverageBundlerElixirTest is Test {
         assertEq(IERC20(asset).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained borrow tokens");
         assertEq(IERC20(collateralAsset).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained collateral tokens");
         
-        // Check aaveAdapter has no tokens
-        assertLt(IERC20(asset).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained borrow tokens");
-        assertEq(IERC20(collateralAsset).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained collateral tokens");
+        // Check mysticAdapter has no tokens
+        assertLt(IERC20(asset).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained borrow tokens");
+        assertEq(IERC20(collateralAsset).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained collateral tokens");
         
         // Check bundler3 has no tokens
         assertEq(IERC20(asset).balanceOf(address(bundler3)), 0, "Bundler3 retained borrow tokens");
@@ -155,6 +155,7 @@ contract AaveLeverageBundlerElixirTest is Test {
         vm.prank(USER);
         Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
@@ -192,6 +193,7 @@ contract AaveLeverageBundlerElixirTest is Test {
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
             address(collateralToken),
+            address(collateralToken),
             0, // Zero collateral
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE
@@ -204,6 +206,7 @@ contract AaveLeverageBundlerElixirTest is Test {
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
             address(collateralToken),
+            address(collateralToken),
             INITIAL_COLLATERAL,
             9999, // Less than 1x leverage
             DEFAULT_SLIPPAGE
@@ -215,6 +218,7 @@ contract AaveLeverageBundlerElixirTest is Test {
         vm.expectRevert("Leverage too high");
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             1000001, // Too high leverage (>100x)
@@ -229,6 +233,7 @@ contract AaveLeverageBundlerElixirTest is Test {
         vm.prank(USER);
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             LEVERAGE_3X,
@@ -405,6 +410,7 @@ contract AaveLeverageBundlerElixirTest is Test {
         vm.prank(USER);
         Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             LEVERAGE_2X,

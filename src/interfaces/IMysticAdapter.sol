@@ -3,15 +3,15 @@ pragma solidity 0.8.28;
 
 import {IERC4626} from "../../lib/openzeppelin-contracts/contracts/interfaces/IERC4626.sol";
 import {IWNative} from "./IWNative.sol";
-import {IAaveV3 as IPool} from "./IAaveV3.sol";
+import {IMysticV3 as IPool} from "./IMysticV3.sol";
 import {IFlashLoanReceiver} from "./IFlashLoanReceiver.sol";
 
 /**
- * @title IAaveAdapter
- * @notice Interface for the Aave adapter contract
- * @dev Defines the functions available in the Aave adapter
+ * @title IMysticAdapter
+ * @notice Interface for the Mystic adapter contract
+ * @dev Defines the functions available in the Mystic adapter
  */
-interface IAaveAdapter is IFlashLoanReceiver {
+interface IMysticAdapter is IFlashLoanReceiver {
     /* CONSTANTS */
     
     /// @dev Interest rate mode: 1 for stable, 2 for variable
@@ -23,7 +23,7 @@ interface IAaveAdapter is IFlashLoanReceiver {
 
     /* IMMUTABLES */
 
-    /// @notice The address of the Aave V3 Pool contract.
+    /// @notice The address of the Mystic V3 Pool contract.
     function AAVE_POOL() external view returns (IPool);
 
     /// @dev The address of the wrapped native token.
@@ -73,49 +73,49 @@ interface IAaveAdapter is IFlashLoanReceiver {
 
     /* AAVE ACTIONS */
 
-    /// @notice Supplies assets to the Aave protocol.
+    /// @notice Supplies assets to the Mystic protocol.
     /// @dev Assets must have been previously sent to the adapter.
     /// @param asset The address of the asset to supply.
     /// @param amount The amount of the asset to supply. Pass `type(uint).max` to supply the adapter's balance.
     /// @param onBehalf The address that will own the increased supply position.
     /// @param useAsCollateral Whether to set this asset as collateral.
-    function aaveSupply(address asset, uint256 amount, address onBehalf, bool useAsCollateral) external;
+    function mysticSupply(address asset, uint256 amount, address onBehalf, bool useAsCollateral) external;
 
-    /// @notice Withdraws assets from the Aave protocol.
-    /// @dev Initiator must have previously authorized the adapter to act on their behalf on Aave.
+    /// @notice Withdraws assets from the Mystic protocol.
+    /// @dev Initiator must have previously authorized the adapter to act on their behalf on Mystic.
     /// @param asset The address of the asset to withdraw.
     /// @param amount The amount of the asset to withdraw. Pass `type(uint).max` to withdraw the entire balance.
     /// @param receiver The address that will receive the withdrawn assets.
-    function aaveWithdraw(address asset, uint256 amount, address onBehalf, address receiver) external;
+    function mysticWithdraw(address asset, uint256 amount, address onBehalf, address receiver) external;
 
-    /// @notice Borrows assets from the Aave protocol.
-    /// @dev Initiator must have sufficient collateral in the Aave protocol.
+    /// @notice Borrows assets from the Mystic protocol.
+    /// @dev Initiator must have sufficient collateral in the Mystic protocol.
     /// @param asset The address of the asset to borrow.
     /// @param amount The amount of the asset to borrow.
     /// @param interestRateMode The interest rate mode (1 for stable, 2 for variable).
     /// @param receiver The address that will receive the borrowed assets.
-    function aaveBorrow(address asset, uint256 amount, uint256 interestRateMode, address from, address receiver) external;
+    function mysticBorrow(address asset, uint256 amount, uint256 interestRateMode, address from, address receiver) external;
 
-    /// @notice Repays a debt on the Aave protocol.
+    /// @notice Repays a debt on the Mystic protocol.
     /// @dev Assets must have been previously sent to the adapter.
     /// @param asset The address of the asset to repay.
     /// @param amount The amount of the asset to repay. Pass `type(uint).max` to repay the adapter's asset balance.
     /// @param interestRateMode The interest rate mode (1 for stable, 2 for variable).
     /// @param onBehalf The address of the owner of the debt position.
-    function aaveRepay(address asset, uint256 amount, uint256 interestRateMode, address onBehalf) external;
+    function mysticRepay(address asset, uint256 amount, uint256 interestRateMode, address onBehalf) external;
 
     /// @notice Set an asset to be used as collateral or not.
-    /// @dev Initiator must have previously authorized the adapter to act on their behalf on Aave.
+    /// @dev Initiator must have previously authorized the adapter to act on their behalf on Mystic.
     /// @param asset The address of the asset.
     /// @param useAsCollateral Whether to use the asset as collateral.
-    function aaveSetUserUseReserveAsCollateral(address asset, bool useAsCollateral) external;
+    function mysticSetUserUseReserveAsCollateral(address asset, bool useAsCollateral) external;
 
-    /// @notice Triggers a flash loan on Aave.
+    /// @notice Triggers a flash loan on Mystic.
     /// @param assets The addresses of the assets to flash loan.
     /// @param amounts The amounts of the assets to flash loan.
     /// @param interestRateModes The interest rate modes to use if debt is opened.
     /// @param data Arbitrary data to pass to the flash loan callback.
-    function aaveFlashLoan(
+    function mysticFlashLoan(
         address[] calldata assets,
         uint256[] calldata amounts,
         uint256[] calldata interestRateModes,

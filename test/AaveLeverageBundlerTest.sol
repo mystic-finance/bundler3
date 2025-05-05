@@ -2,24 +2,24 @@
 pragma solidity ^0.8.0;
 
 import {ErrorsLib} from "../src/libraries/ErrorsLib.sol";
-import {AaveLeverageBundler} from "../src/calls/AaveLeverageBundler.sol";
-import {IAaveAdapter} from "../src/interfaces/IAaveAdapter.sol";
+import {MysticLeverageBundler} from "../src/calls/MysticLeverageBundler.sol";
+import {IMysticAdapter} from "../src/interfaces/IMysticAdapter.sol";
 import {IMaverickV2Pool} from "../src/interfaces/IMaverickV2Pool.sol";
 import {IMaverickV2Factory} from "../src/interfaces/IMaverickV2Factory.sol";
 import {IMaverickV2Quoter} from "../src/interfaces/IMaverickV2Quoter.sol";
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IBundler3, Call} from "../src/interfaces/IBundler3.sol";
-import {AaveAdapter} from "src/adapters/AaveAdapter.sol";
+import {MysticAdapter} from "src/adapters/MysticAdapter.sol";
 import {Bundler3, Call} from "../src/Bundler3.sol";
 import "../lib/forge-std/src/Test.sol";
 import "./helpers/mocks/ERC20Mock.sol";
 import {ICreditDelegationToken} from "../src/interfaces/ICreditDelegationToken.sol";
 import {MaverickSwapAdapter} from "../src/adapters/MaverickAdapter.sol";
-import {IAaveV3 as IPool, ReserveDataMap as ReserveData} from "../src/interfaces/IAaveV3.sol";
+import {IMysticV3 as IPool, ReserveDataMap as ReserveData} from "../src/interfaces/IMysticV3.sol";
 
-contract AaveLeverageBundlerRWATest is Test {
-    AaveLeverageBundler internal leverageBundler;
-    AaveAdapter internal aaveAdapterMock;
+contract MysticLeverageBundlerRWATest is Test {
+    MysticLeverageBundler internal leverageBundler;
+    MysticAdapter internal mysticAdapterMock;
     MaverickSwapAdapter internal maverickAdapterMock;
     address internal maverickFactoryMock;
     address internal maverickQuoterMock;
@@ -58,27 +58,27 @@ contract AaveLeverageBundlerRWATest is Test {
         bundler3 = new Bundler3();
         
         // Create mock contracts
-        aaveAdapterMock = new AaveAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
+        mysticAdapterMock = new MysticAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
         maverickFactoryMock = 0x056A588AfdC0cdaa4Cab50d8a4D2940C5D04172E;
         maverickQuoterMock = 0xf245948e9cf892C351361d298cc7c5b217C36D82;
         maverickAdapterMock = new MaverickSwapAdapter(maverickFactoryMock, maverickQuoterMock);
         
         // Deploy leverage bundler
-        leverageBundler = new AaveLeverageBundler(
+        leverageBundler = new MysticLeverageBundler(
             address(bundler3), 
-            address(aaveAdapterMock), 
+            address(mysticAdapterMock), 
             address(maverickAdapterMock)
         );
         deal(address(collateralToken), USER, 1e6 * INITIAL_COLLATERAL);
-        deal(address(borrowToken), address(maverickPoolMock), 1e6 * INITIAL_COLLATERAL);
+        deal(address(borrowToken), USER, 1e6 * INITIAL_COLLATERAL);
         
         // Approve tokens
         vm.startPrank(USER);
-        collateralToken.approve(address(aaveAdapterMock), type(uint256).max);
-        borrowToken.approve(address(aaveAdapterMock), type(uint256).max);
-        ICreditDelegationToken(0xF7a8921211913c43108D34277F0Be561b3C5392A).approveDelegation(address(aaveAdapterMock), type(uint128).max);
-        IERC20(0x744dcD914b090b1D5b78469a3e6336547B507b97).approve(address(aaveAdapterMock), type(uint128).max);
-        IERC20(0xEDd9d0554470249ff56831fEdC5D0e881C95a1F3).approve(address(aaveAdapterMock), type(uint128).max);
+        collateralToken.approve(address(mysticAdapterMock), type(uint256).max);
+        borrowToken.approve(address(mysticAdapterMock), type(uint256).max);
+        ICreditDelegationToken(0xF7a8921211913c43108D34277F0Be561b3C5392A).approveDelegation(address(mysticAdapterMock), type(uint128).max);
+        IERC20(0x744dcD914b090b1D5b78469a3e6336547B507b97).approve(address(mysticAdapterMock), type(uint128).max);
+        IERC20(0xEDd9d0554470249ff56831fEdC5D0e881C95a1F3).approve(address(mysticAdapterMock), type(uint128).max);
         IERC20(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db).approve(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), type(uint128).max);
         // IPool(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0).supply(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db, INITIAL_COLLATERAL*1000, USER, 0);
         // IPool(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0)).setUserUseReserveAsCollateral(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db, true);
@@ -91,7 +91,7 @@ contract AaveLeverageBundlerRWATest is Test {
      * @return aToken The aToken address
      * @return vToken The vToken address
      */
-    function getAaveTokens(address asset) internal view returns (address aToken, address vToken) {
+    function getMysticTokens(address asset) internal view returns (address aToken, address vToken) {
         ReserveData memory reserveData = IPool(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0)).getReserveData(asset);
         aToken = reserveData.aTokenAddress;
         vToken = reserveData.variableDebtTokenAddress;
@@ -110,19 +110,19 @@ contract AaveLeverageBundlerRWATest is Test {
         data.totalBorrows = leverageBundler.totalBorrows(asset);
         data.totalCollaterals = leverageBundler.totalCollaterals(collateralAsset);
         
-        (address aToken, address vToken) = getAaveTokens(collateralAsset);
+        (address aToken, address vToken) = getMysticTokens(collateralAsset);
         if (aToken != address(0)) {
             data.aTokenBalance = IERC20(aToken).balanceOf(user);
         }
         
-        (,address borrowVToken) = getAaveTokens(asset);
+        (,address borrowVToken) = getMysticTokens(asset);
         if (borrowVToken != address(0)) {
             data.vTokenBalance = IERC20(borrowVToken).balanceOf(user);
         }
         
         data.userTokenBalance = IERC20(collateralAsset).balanceOf(user);
         data.bundlerTokenBalance = IERC20(collateralAsset).balanceOf(address(leverageBundler));
-        data.adapterTokenBalance = IERC20(collateralAsset).balanceOf(address(aaveAdapterMock));
+        data.adapterTokenBalance = IERC20(collateralAsset).balanceOf(address(mysticAdapterMock));
     }
 
     /**
@@ -135,32 +135,32 @@ contract AaveLeverageBundlerRWATest is Test {
         assertEq(IERC20(asset).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained borrow tokens");
         assertEq(IERC20(collateralAsset).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained collateral tokens");
         
-        // Check aaveAdapter has no tokens
-        assertLt(IERC20(asset).balanceOf(address(aaveAdapterMock)), 2, "AaveAdapter retained borrow tokens"); //borrow tok is forgivable
-        assertEq(IERC20(collateralAsset).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained collateral tokens");
+        // Check mysticAdapter has no tokens
+        assertLt(IERC20(asset).balanceOf(address(mysticAdapterMock)), 2, "MysticAdapter retained borrow tokens"); //borrow tok is forgivable
+        assertEq(IERC20(collateralAsset).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained collateral tokens");
         
         // Check bundler3 has no tokens
         assertEq(IERC20(asset).balanceOf(address(bundler3)), 0, "Bundler3 retained borrow tokens");
         assertEq(IERC20(collateralAsset).balanceOf(address(bundler3)), 0, "Bundler3 retained collateral tokens");
 
-        (address aToken, address vToken) = getAaveTokens(asset);
+        (address aToken, address vToken) = getMysticTokens(asset);
         assertEq(IERC20(aToken).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained borrow tokens");
         assertEq(IERC20(vToken).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained collateral tokens");
         
-        // Check aaveAdapter has no tokens
-        assertEq(IERC20(aToken).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained borrow tokens"); //borrow tok is forgivable
-        assertEq(IERC20(vToken).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained collateral tokens");
+        // Check mysticAdapter has no tokens
+        assertEq(IERC20(aToken).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained borrow tokens"); //borrow tok is forgivable
+        assertEq(IERC20(vToken).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained collateral tokens");
 
         assertEq(IERC20(aToken).balanceOf(address(bundler3)), 0, "Bundler3 retained borrow tokens");
         assertEq(IERC20(vToken).balanceOf(address(bundler3)), 0, "Bundler3 retained collateral tokens");
 
-        (address aToken1, address vToken2) = getAaveTokens(collateralAsset);
+        (address aToken1, address vToken2) = getMysticTokens(collateralAsset);
         assertEq(IERC20(aToken1).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained borrow tokens");
         assertEq(IERC20(vToken2).balanceOf(address(leverageBundler)), 0, "LeverageBundler retained collateral tokens");
         
-        // Check aaveAdapter has no tokens
-        assertEq(IERC20(aToken1).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained borrow tokens"); //borrow tok is forgivable
-        assertEq(IERC20(vToken2).balanceOf(address(aaveAdapterMock)), 0, "AaveAdapter retained collateral tokens");
+        // Check mysticAdapter has no tokens
+        assertEq(IERC20(aToken1).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained borrow tokens"); //borrow tok is forgivable
+        assertEq(IERC20(vToken2).balanceOf(address(mysticAdapterMock)), 0, "MysticAdapter retained collateral tokens");
 
         assertEq(IERC20(aToken1).balanceOf(address(bundler3)), 0, "Bundler3 retained borrow tokens");
         assertEq(IERC20(vToken2).balanceOf(address(bundler3)), 0, "Bundler3 retained collateral tokens");
@@ -179,6 +179,7 @@ contract AaveLeverageBundlerRWATest is Test {
         vm.prank(USER);
         Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
@@ -209,12 +210,54 @@ contract AaveLeverageBundlerRWATest is Test {
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
     }
+
+    function testCreateOpenLeverageBundleWithDifferentInputAsset() public {
+        // Get initial position data
+        PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        uint256 initialUserBalance = borrowToken.balanceOf(USER);
+        
+        // Execute the open leverage function
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(borrowToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
+        
+        // Verify user's collateral was transferred
+        assertEq(initialUserBalance - borrowToken.balanceOf(USER), INITIAL_COLLATERAL, "User collateral was not transferred correctly");
+        
+        // Verify position tracking was updated
+        assertGt(afterVal.totalBorrowsUser, 0, "User's total borrows not updated");
+        assertGt(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral not updated");
+        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
+        assertEq(afterVal.totalCollaterals, afterVal.totalCollateralUser, "Total collaterals mismatch");
+        
+        // Verify aToken balance increased
+        assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
+        
+        // Verify vToken (debt) balance increased
+        assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
     
     function testCreateOpenLeverageBundleZeroCollateral() public {
         vm.prank(USER);
         vm.expectRevert("Zero collateral amount");
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             0, // Zero collateral
             LEVERAGE_2X,
@@ -228,6 +271,7 @@ contract AaveLeverageBundlerRWATest is Test {
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
             address(collateralToken),
+            address(collateralToken),
             INITIAL_COLLATERAL,
             9999, // Less than 1x leverage
             DEFAULT_SLIPPAGE
@@ -239,6 +283,7 @@ contract AaveLeverageBundlerRWATest is Test {
         vm.expectRevert("Leverage too high");
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             1000001, // Too high leverage (>100x)
@@ -254,6 +299,25 @@ contract AaveLeverageBundlerRWATest is Test {
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
             address(collateralToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_3X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Return the updated position data
+        return getPositionData(USER, address(borrowToken), address(collateralToken));
+    }
+
+    function _createInitialPositionWithDifferentInputAsset() internal returns (PositionData memory) {
+        // Get initial position data
+        PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(borrowToken),
             INITIAL_COLLATERAL,
             LEVERAGE_3X,
             DEFAULT_SLIPPAGE
@@ -270,6 +334,44 @@ contract AaveLeverageBundlerRWATest is Test {
     function testCreateCloseLeverageBundle() public {
         // First open a position
         PositionData memory before = _createInitialPosition();
+        uint256 debtToClose = before.totalBorrowsUser * 95 / 100; // Close 95% of position
+        
+        // Close the position
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            debtToClose
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertEq(bundleCalls.length, 5, "Bundle should have 5 calls");
+        
+        // Verify position tracking was updated
+        assertApproxEqRel(afterVal.totalBorrowsUser, before.totalBorrowsUser - debtToClose, 0.01e18, "User's total borrows not reduced correctly");
+        assertLt(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral not reduced");
+        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
+        assertEq(afterVal.totalCollaterals, afterVal.totalCollateralUser, "Total collaterals mismatch");
+        
+        // Verify aToken balance decreased
+        assertLt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not decrease");
+        
+        // Verify vToken (debt) balance decreased
+        assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
+        
+        // Verify user received collateral back
+        assertGt(afterVal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+
+    function testCreateCloseLeverageBundleWithDifferentInputAsset() public {
+        // First open a position
+        PositionData memory before = _createInitialPositionWithDifferentInputAsset();
         uint256 debtToClose = before.totalBorrowsUser * 95 / 100; // Close 95% of position
         
         // Close the position
@@ -351,6 +453,7 @@ contract AaveLeverageBundlerRWATest is Test {
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
             address(collateralToken),
+            address(collateralToken),
             INITIAL_COLLATERAL * 50,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE
@@ -367,6 +470,7 @@ contract AaveLeverageBundlerRWATest is Test {
         vm.prank(USER);
         leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL * 50,
             LEVERAGE_2X,
@@ -446,11 +550,82 @@ contract AaveLeverageBundlerRWATest is Test {
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
     }
+
+     function testUpdateLeverageBundleIncreaseLeverageOnlyWithDifferentInputAsset() public {
+        // First open a position
+        PositionData memory before = _createInitialPositionWithDifferentInputAsset();
+        
+        // Update leverage: increase from current to higher
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.updateLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            LEVERAGE_3X + 5000,  // Increase leverage
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
+        
+        // Verify borrow increased but collateral stayed the same
+        assertGt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows did not increase");
+        assertEq(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral changed unexpectedly");
+        
+        // Verify tracking is accurate
+        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
+        assertEq(afterVal.totalCollaterals, afterVal.totalCollateralUser, "Total collaterals mismatch");
+        
+        // Verify vToken (debt) balance increased
+        assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
     
     // Test decreasing leverage only
     function testUpdateLeverageBundleDecreaseLeverageOnly() public {
         // First open a position
         PositionData memory before = _createInitialPosition();
+        
+        // Update leverage: decrease from current to lower
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.updateLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            LEVERAGE_1_5X,  // Decrease leverage
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
+        
+        // Verify borrow and collateral decreased
+        assertLt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows did not decrease");
+        assertLt(afterVal.totalCollateralUser-1, before.totalCollateralUser, "User's total collateral did not decrease");
+        
+        // Verify tracking is accurate
+        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
+        assertGt(afterVal.totalCollaterals, afterVal.totalCollateralUser -1, "Total collaterals mismatch");
+        
+        // Verify user received some collateral back
+        assertGt(afterVal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
+        
+        // Verify vToken (debt) balance decreased
+        assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+
+     function testUpdateLeverageBundleDecreaseLeverageOnlyWithDifferentInputAsset() public {
+        // First open a position
+        PositionData memory before = _createInitialPositionWithDifferentInputAsset();
         
         // Update leverage: decrease from current to lower
         vm.prank(USER);
@@ -495,6 +670,115 @@ contract AaveLeverageBundlerRWATest is Test {
         vm.prank(USER);
         Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
             address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
+        
+        // Verify collateral was transferred from user
+        assertEq(initialUserBalance - collateralToken.balanceOf(USER), INITIAL_COLLATERAL, "User collateral was not transferred correctly");
+        
+        // Verify position tracking was updated
+        assertGt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows not updated");
+        assertGt(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral not updated");
+        
+        // Verify aToken balance increased
+        assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+
+    function testAddCollateralWithDifferentInputAsset() public {
+        // First open a position
+        PositionData memory before = _createInitialPosition();
+        uint256 initialUserBalance = borrowToken.balanceOf(USER);
+        
+        // Add more collateral
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(borrowToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
+        
+        // Verify collateral was transferred from user
+        assertEq(initialUserBalance - borrowToken.balanceOf(USER), INITIAL_COLLATERAL, "User collateral was not transferred correctly");
+        
+        // Verify position tracking was updated
+        assertGt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows not updated");
+        assertGt(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral not updated");
+        
+        // Verify aToken balance increased
+        assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+
+    function testAddCollateralWithDifferentInputAsset2() public {
+        // First open a position
+        PositionData memory before = _createInitialPositionWithDifferentInputAsset();
+        uint256 initialUserBalance = borrowToken.balanceOf(USER);
+        
+        // Add more collateral
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(borrowToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data afterVal operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
+        
+        // Verify collateral was transferred from user
+        assertEq(initialUserBalance - borrowToken.balanceOf(USER), INITIAL_COLLATERAL, "User collateral was not transferred correctly");
+        
+        // Verify position tracking was updated
+        assertGt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows not updated");
+        assertGt(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral not updated");
+        
+        // Verify aToken balance increased
+        assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+
+    function testAddCollateralWithDifferentInputAsset3() public {
+        // First open a position
+        PositionData memory before = _createInitialPositionWithDifferentInputAsset();
+        uint256 initialUserBalance = collateralToken.balanceOf(USER);
+        
+        // Add more collateral
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
             address(collateralToken),
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
@@ -579,6 +863,65 @@ contract AaveLeverageBundlerRWATest is Test {
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
     }
+
+    function testRemoveCollateralWithDifferentInputAsset() public {
+        // First open a position
+        PositionData memory before = _createInitialPositionWithDifferentInputAsset();
+        uint256 debtToClose = before.totalBorrowsUser / 3; // Close 1/3 of position
+        
+        // Remove some collateral by closing part of position
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            debtToClose
+        );
+        
+        // Get position data afterVal first operation
+        PositionData memory after1 = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Remove more in a second operation
+        vm.prank(USER);
+        Call[] memory bundleCalls2 = leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            debtToClose
+        );
+        
+        // Get position data afterVal second operation
+        PositionData memory after2 = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Remove the rest in a third operation
+        vm.prank(USER);
+        Call[] memory bundleCalls3 = leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            type(uint256).max
+        );
+        
+        // Get position data afterVal final operation
+        PositionData memory afterFinal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(bundleCalls.length, 0, "First bundle should contain calls");
+        assertGt(bundleCalls2.length, 0, "Second bundle should contain calls");
+        assertGt(bundleCalls3.length, 0, "Third bundle should contain calls");
+        
+        // Verify intermediary states
+        assertApproxEqRel(after1.totalBorrowsUser, before.totalBorrowsUser - debtToClose, 0.01e18, "First close: User's total borrows not reduced correctly");
+        assertApproxEqRel(after2.totalBorrowsUser, after1.totalBorrowsUser - debtToClose, 0.01e18, "Second close: User's total borrows not reduced correctly");
+        
+        // Verify final state
+        assertEq(afterFinal.totalBorrowsUser, 0, "Final: User still has borrows");
+        assertEq(afterFinal.totalCollateralUser, 0, "Final: User still has collateral in position");
+        
+        // Verify user received all collateral back
+        assertGt(afterFinal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+    
 
     // Test error cases
     function testUpdateLeverageBundleNoPosition() public {

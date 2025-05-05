@@ -7,28 +7,28 @@ import {IMaverickV2Pool} from "../interfaces/IMaverickV2Pool.sol";
 import {IMaverickV2Factory} from "../interfaces/IMaverickV2Factory.sol";
 import {IMaverickV2Quoter} from "../interfaces/IMaverickV2Quoter.sol";
 import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import {IAaveAdapter} from "../interfaces/IAaveAdapter.sol";
+import {IMysticAdapter} from "../interfaces/IMysticAdapter.sol";
 import { IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ErrorsLib} from "../libraries/ErrorsLib.sol";
 import {MaverickSwapAdapter} from "../adapters/MaverickAdapter.sol";
 
 
 /**
- * @title AaveLeverageBundler
- * @notice Creates bundles of calls for leveraged positions on Aave using flashloans and Maverick swap
+ * @title MysticLeverageBundler
+ * @notice Creates bundles of calls for leveraged positions on Mystic using flashloans and Maverick swap
  * @dev Uses bundler to create sequences of calls for execution in a single transaction
  */
 // we expect leverage against derivatives ie nrwa/pusd, ntbill/pusd, nelixir/pusd
-contract AaveLeverageBundler is Ownable {
+contract MysticLeverageBundler is Ownable {
     // Bundler contract
     IBundler3 public immutable bundler;
-    IAaveAdapter public aaveAdapter;
+    IMysticAdapter public mysticAdapter;
     MaverickSwapAdapter public maverickAdapter;
     
     // Constants
     uint256 public constant SLIPPAGE_SCALE = 10000; // 10000 = 100%
     uint256 public constant DEFAULT_SLIPPAGE = 9700; // 97%, or 3% slippage allowance
-    uint256 public constant VARIABLE_RATE_MODE = 2; // Aave variable interest rate mode
+    uint256 public constant VARIABLE_RATE_MODE = 2; // Mystic variable interest rate mode
 
     mapping(address => uint256) public totalBorrows;
     mapping(address => uint256) public totalCollaterals;
@@ -43,15 +43,15 @@ contract AaveLeverageBundler is Ownable {
 
     constructor(
         address _bundler,
-        address _aaveAdapter,
+        address _mysticAdapter,
         address _maverickAdapter
     ) Ownable(msg.sender) {
         bundler = IBundler3(_bundler);
-        aaveAdapter = IAaveAdapter(_aaveAdapter);
+        mysticAdapter = IMysticAdapter(_mysticAdapter);
         maverickAdapter = MaverickSwapAdapter(_maverickAdapter);
     }
 
-    function createOpenLeverageBundle(address asset, address collateralAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
+    function createOpenLeverageBundle(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
       require(initialCollateralAmount > 0, "Zero collateral amount");
       require(targetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
       require(targetLeverage <= 1000000, "Leverage too high");
@@ -59,36 +59,37 @@ contract AaveLeverageBundler is Ownable {
       uint256 positionSize = initialCollateralAmount * targetLeverage / SLIPPAGE_SCALE;
       uint256 borrowAmount = positionSize - initialCollateralAmount;
 
-      IERC20(collateralAsset).approve(address(aaveAdapter), type(uint256).max);
-      IERC20(asset).approve(address(aaveAdapter), type(uint256).max);
+      IERC20(collateralAsset).approve(address(mysticAdapter), type(uint256).max);
+      IERC20(asset).approve(address(mysticAdapter), type(uint256).max);
       
       // Check if there's enough liquidity for flashloan
-      if (aaveAdapter.getAvailableLiquidity(asset) > positionSize) {
-          return _createOpenLeverageBundleWithFlashloan(asset, collateralAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
+      if (mysticAdapter.getAvailableLiquidity(asset) > positionSize) {
+          return _createOpenLeverageBundleWithFlashloan(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
       } else { // loop can still accomodate smaller leverages even with insufficient liqudiity in a pool, there will be a warning in the frontend though
-          return _createOpenLeverageBundleWithLoops(asset, collateralAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
+          return _createOpenLeverageBundleWithLoops(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
       }
     }
-    function _createOpenLeverageBundleWithFlashloan(address asset, address collateralAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
+    function _createOpenLeverageBundleWithFlashloan(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
+        require(inputAsset == collateralAsset || inputAsset == asset, "Input asset must be the same as collateral asset or asset");
         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
-        uint256 positionSize = initialCollateralAmount * targetLeverage / SLIPPAGE_SCALE;
-        uint256 borrowAmount = getQuote(collateralAsset, asset, positionSize - initialCollateralAmount);
-        // uint256 borrowAmount = getQuote(collateralAsset , asset, positionSize - initialCollateralAmount);
+        uint256 collateralValue = inputAsset == collateralAsset ? initialCollateralAmount : getQuote(inputAsset, collateralAsset, initialCollateralAmount);
+        uint256 positionSize = collateralValue * targetLeverage / SLIPPAGE_SCALE;
+        uint256 borrowAmount = getQuote(collateralAsset, asset, positionSize - collateralValue);
         
         Call[] memory mainBundle = new Call[](2);
         Call[] memory flashloanCallbackBundle = new Call[](5);
-        uint totalBorrowAmount = borrowAmount + aaveAdapter.flashLoanFee(borrowAmount) + 1; // +1 for rounding buffer
+        uint totalBorrowAmount = borrowAmount + mysticAdapter.flashLoanFee(borrowAmount) + 1; // +1 for rounding buffer
 
         // Compressed callback bundle creation
         flashloanCallbackBundle[0] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
         flashloanCallbackBundle[1] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0, slippage, false);
-        flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(aaveAdapter), type(uint256).max);
-        flashloanCallbackBundle[3] = _createAaveSupplyCall( collateralAsset, type(uint256).max, msg.sender);
-        flashloanCallbackBundle[4] = _createAaveBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(aaveAdapter));
+        flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
+        flashloanCallbackBundle[3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+        flashloanCallbackBundle[4] = _createMysticBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(mysticAdapter));
 
         // Compressed main bundle creation
-        mainBundle[0] = _createERC20TransferFromCall(collateralAsset,msg.sender,address(this),initialCollateralAmount);
-        mainBundle[1] = _createAaveFlashloanCall(asset,borrowAmount,false,abi.encode(flashloanCallbackBundle));
+        mainBundle[0] = inputAsset == collateralAsset ? _createERC20TransferFromCall(collateralAsset,msg.sender,address(this),initialCollateralAmount) : _createERC20TransferFromCall(asset,msg.sender,address(maverickAdapter),initialCollateralAmount);
+        mainBundle[1] = _createMysticFlashloanCall(asset,borrowAmount,false,abi.encode(flashloanCallbackBundle));
 
         bundler.multicall(mainBundle);
 
@@ -98,32 +99,33 @@ contract AaveLeverageBundler is Ownable {
         totalCollateralsPerUser[collateralAsset][msg.sender] += positionSize;
         
         emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
-        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollateralsPerUser[collateralAsset][msg.sender], totalBorrowsPerUser[asset][msg.sender]);
+        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[collateralAsset], totalBorrows[asset]);
         
         return mainBundle;
     }
 
-    function _createOpenLeverageBundleWithLoops(address asset, address collateralAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
+    function _createOpenLeverageBundleWithLoops(address asset, address collateralAsset, address inputAsset,  uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
         // very expensive gas wise, with a limit of 25 loops(4x leverage), and extremely ineffective, only to be used if pool cannot fulfill flashloan
         // we understand that iterations != leverage but fo the sake of limiting gas, we assume iteration == loop instead of 1-ltv**(n+1)/1-ltv, where n is iteration
+        require(inputAsset != collateralAsset, "Input asset must be the same as collateral asset");
         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
-        uint256 ltv = aaveAdapter.getAssetLtv(collateralAsset);
+        uint256 ltv = mysticAdapter.getAssetLtv(collateralAsset);
         uint8 loop = 20;
         require(ltv > 0, "Collateral asset has no LTV");
         
         Call[] memory mainBundle = new Call[](2+ loop*4);
-        mainBundle[0] = _createERC20TransferFromCall(collateralAsset,msg.sender,address(aaveAdapter),initialCollateralAmount);
-        mainBundle[1] = _createAaveSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+        mainBundle[0] = _createERC20TransferFromCall(inputAsset,msg.sender,address(mysticAdapter),initialCollateralAmount);
+        mainBundle[1] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
         uint256 newCollateral = initialCollateralAmount;
         totalCollaterals[collateralAsset] += newCollateral;
         totalCollateralsPerUser[collateralAsset][msg.sender] += newCollateral;
 
         for (uint8 i=0; i< loop; i++){
           uint256 idx = 2 + i * 4;
-          mainBundle[idx] = _createAaveBorrowCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender, address(maverickAdapter));
+          mainBundle[idx] = _createMysticBorrowCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender, address(maverickAdapter));
           mainBundle[idx+1] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0, slippage, false);
-          mainBundle[idx+2] = _createERC20TransferFromCall(collateralAsset, address(this), address(aaveAdapter), type(uint256).max);
-          mainBundle[idx+3] = _createAaveSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+          mainBundle[idx+2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
+          mainBundle[idx+3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
 
           newCollateral = newCollateral * ltv / SLIPPAGE_SCALE;
           uint256 newBorrow = getQuote(collateralAsset, asset, newCollateral) * ltv / SLIPPAGE_SCALE;
@@ -152,7 +154,7 @@ contract AaveLeverageBundler is Ownable {
       require(debtToClose > 0, "no debt found");
       
       // Check if there's enough liquidity for flashloan or if we're closing a small position
-      if (aaveAdapter.getAvailableLiquidity(asset) > debtToClose) {
+      if (mysticAdapter.getAvailableLiquidity(asset) > debtToClose) {
         return _createCloseLeverageBundleWithFlashloan(asset, collateralAsset, debtToClose);
       } else {
         return _createCloseLeverageBundleWithLoops(asset, collateralAsset, debtToClose);
@@ -164,17 +166,17 @@ contract AaveLeverageBundler is Ownable {
         Call[] memory flashloanCallbackBundle = new Call[](4);
 
         uint256 debtToCover = debtToClose;
-        uint totalBorrowAmount = debtToCover + aaveAdapter.flashLoanFee(debtToCover) + 1; // +1 for rounding buffer
+        uint totalBorrowAmount = debtToCover + mysticAdapter.flashLoanFee(debtToCover) + 1; // +1 for rounding buffer
         uint256 collateralForRepayment = (totalCollateralsPerUser[collateralAsset][msg.sender] * debtToCover) / totalBorrowsPerUser[asset][msg.sender];
                 
          // Compressed callback bundle creation
-        flashloanCallbackBundle[0] = _createAaveRepayCall(asset, debtToCover, VARIABLE_RATE_MODE, msg.sender);
-        flashloanCallbackBundle[1] = _createAaveWithdrawCall(collateralAsset, collateralForRepayment, msg.sender, address(maverickAdapter));
+        flashloanCallbackBundle[0] = _createMysticRepayCall(asset, debtToCover, VARIABLE_RATE_MODE, msg.sender);
+        flashloanCallbackBundle[1] = _createMysticWithdrawCall(collateralAsset, collateralForRepayment, msg.sender, address(maverickAdapter));
         flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, asset, collateralForRepayment, totalBorrowAmount , 0, false);
-        flashloanCallbackBundle[3] = _createERC20TransferFromCall(asset, address(this), address(aaveAdapter), type(uint256).max);
+        flashloanCallbackBundle[3] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
         
         // Compressed main bundle creation
-        mainBundle[0] = _createAaveFlashloanCall(asset,debtToCover,false, abi.encode(flashloanCallbackBundle));
+        mainBundle[0] = _createMysticFlashloanCall(asset,debtToCover,false, abi.encode(flashloanCallbackBundle));
         mainBundle[1] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
         mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , 0, false);
         mainBundle[3] = _createERC20TransferCall(collateralAsset, address(this), type(uint256).max);
@@ -197,27 +199,27 @@ contract AaveLeverageBundler is Ownable {
     function _createCloseLeverageBundleWithLoops(address asset, address collateralAsset, uint256 debtToClose) internal returns (Call[] memory bundle) {
       uint256 collateralToWithdraw = (totalCollateralsPerUser[collateralAsset][msg.sender] * debtToClose) / totalBorrowsPerUser[asset][msg.sender];
       uint256 leverage = (totalCollateralsPerUser[collateralAsset][msg.sender]) / (totalCollateralsPerUser[collateralAsset][msg.sender] - totalBorrowsPerUser[asset][msg.sender]);
-      uint256 ltv = aaveAdapter.getAssetLtv(collateralAsset);
+      uint256 ltv = mysticAdapter.getAssetLtv(collateralAsset);
       uint8 numLoops = 20;
       uint256 remainingDebt = debtToClose;
-      uint256 borrowable = aaveAdapter.getWithdrawableLiquidity(msg.sender, collateralAsset);
+      uint256 borrowable = mysticAdapter.getWithdrawableLiquidity(msg.sender, collateralAsset);
 
       Call[] memory mainBundle = new Call[](numLoops * 4+1); 
       
       // For each loop iteration
       for (uint8 i = 0; i < numLoops; i++) {
           uint256 baseIndex = i * 4;
-          mainBundle[baseIndex + 0] = _createAaveWithdrawCall(collateralAsset, type(uint256).max, msg.sender, address(maverickAdapter));
+          mainBundle[baseIndex + 0] = _createMysticWithdrawCall(collateralAsset, type(uint256).max, msg.sender, address(maverickAdapter));
           mainBundle[baseIndex + 1] = _createMaverickSwapCall(collateralAsset, asset, type(uint256).max, 0, 0, false);
-          mainBundle[baseIndex + 2] = _createERC20TransferFromCall(asset, address(this), address(aaveAdapter), type(uint256).max);
-          mainBundle[baseIndex + 3] = _createAaveRepayCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender);
+          mainBundle[baseIndex + 2] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
+          mainBundle[baseIndex + 3] = _createMysticRepayCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender);
           
           remainingDebt = remainingDebt > borrowable? remainingDebt - borrowable:0;
           borrowable = borrowable * SLIPPAGE_SCALE/ ltv;
           if(remainingDebt == 0) break;
       }
       
-      mainBundle[numLoops * 4] = _createAaveWithdrawCall(collateralAsset, type(uint256).max, msg.sender, msg.sender);
+      mainBundle[numLoops * 4] = _createMysticWithdrawCall(collateralAsset, type(uint256).max, msg.sender, msg.sender);
       uint spentCollateral = getQuote(asset, collateralAsset, debtToClose - remainingDebt);
       bundler.multicall(mainBundle);
       
@@ -260,7 +262,7 @@ contract AaveLeverageBundler is Ownable {
       if (borrowDelta > 0) {
           // INCREASE LEVERAGE CASE
         uint256 additionalBorrowAmount = uint256(borrowDelta);
-        uint totalBorrowAmount = additionalBorrowAmount + aaveAdapter.flashLoanFee(additionalBorrowAmount) + 1;
+        uint totalBorrowAmount = additionalBorrowAmount + mysticAdapter.flashLoanFee(additionalBorrowAmount) + 1;
         uint256 collateralForRepayment = (totalCollateralsPerUser[collateralAsset][msg.sender] * additionalBorrowAmount) / totalBorrowsPerUser[asset][msg.sender];
 
         mainBundle = new Call[](1);
@@ -268,11 +270,11 @@ contract AaveLeverageBundler is Ownable {
 
         flashloanCallbackBundle[0] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
         flashloanCallbackBundle[1] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0, slippage, false);
-        flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(aaveAdapter), type(uint256).max);
-        flashloanCallbackBundle[3] = _createAaveSupplyCall( collateralAsset, type(uint256).max, msg.sender);
-        flashloanCallbackBundle[4] = _createAaveBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(aaveAdapter));
+        flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
+        flashloanCallbackBundle[3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+        flashloanCallbackBundle[4] = _createMysticBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(mysticAdapter));
 
-        mainBundle[0] = _createAaveFlashloanCall(asset,additionalBorrowAmount,false,abi.encode(flashloanCallbackBundle));
+        mainBundle[0] = _createMysticFlashloanCall(asset,additionalBorrowAmount,false,abi.encode(flashloanCallbackBundle));
         
         totalBorrows[asset] += additionalBorrowAmount;
         totalBorrowsPerUser[asset][msg.sender] += additionalBorrowAmount;
@@ -283,13 +285,13 @@ contract AaveLeverageBundler is Ownable {
         mainBundle = new Call[](5);
         flashloanCallbackBundle = new Call[](4);
 
-        flashloanCallbackBundle[0] = _createAaveRepayCall(asset, repayAmount, VARIABLE_RATE_MODE, msg.sender);
-        flashloanCallbackBundle[1] = _createAaveWithdrawCall(collateralAsset, collateralForRepayment, msg.sender, address(maverickAdapter));
+        flashloanCallbackBundle[0] = _createMysticRepayCall(asset, repayAmount, VARIABLE_RATE_MODE, msg.sender);
+        flashloanCallbackBundle[1] = _createMysticWithdrawCall(collateralAsset, collateralForRepayment, msg.sender, address(maverickAdapter));
         flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, asset, collateralForRepayment, repayAmount , 0, false);
-        flashloanCallbackBundle[3] = _createERC20TransferFromCall(asset, address(this), address(aaveAdapter), type(uint256).max);
+        flashloanCallbackBundle[3] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
         
         // Compressed main bundle creation
-        mainBundle[0] = _createAaveFlashloanCall(asset,repayAmount,false, abi.encode(flashloanCallbackBundle));
+        mainBundle[0] = _createMysticFlashloanCall(asset,repayAmount,false, abi.encode(flashloanCallbackBundle));
         mainBundle[1] = _createERC20TransferCall(asset,address(maverickAdapter), type(uint256).max);
         mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , 0, false);
         mainBundle[3] = _createERC20TransferCall(collateralAsset,address(this), type(uint256).max);
@@ -309,7 +311,7 @@ contract AaveLeverageBundler is Ownable {
       return mainBundle;
   }
     
-    function _createAaveFlashloanCall(
+    function _createMysticFlashloanCall(
         address asset,
         uint256 amount,
         bool isDebtToken,
@@ -323,32 +325,32 @@ contract AaveLeverageBundler is Ownable {
         modes[0] = isDebtToken ? 2 : 0; // 0 = no debt, 2 = variable rate debt
         
         return _call(
-            address(aaveAdapter), abi.encodeCall(IAaveAdapter.aaveFlashLoan, (assets,amounts,modes,data) ), 0, false, data.length == 0 ? bytes32(0) : keccak256(data)
+            address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticFlashLoan, (assets,amounts,modes,data) ), 0, false, data.length == 0 ? bytes32(0) : keccak256(data)
         );
     }
     
-    function _createAaveSupplyCall(
+    function _createMysticSupplyCall(
         address asset,
         uint256 amount,
         address onBehalfOf
     ) internal view returns (Call memory) {
         return _call(
-            address(aaveAdapter), abi.encodeCall(IAaveAdapter.aaveSupply, (asset,amount,onBehalfOf,true) ), 0, false, bytes32(0)
+            address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticSupply, (asset,amount,onBehalfOf,true) ), 0, false, bytes32(0)
         );
     }
     
-    function _createAaveWithdrawCall(
+    function _createMysticWithdrawCall(
         address asset,
         uint256 amount,
         address onBehalfOf,
         address to
     ) internal view returns (Call memory) {
         return _call(
-            address(aaveAdapter), abi.encodeCall(IAaveAdapter.aaveWithdraw, (asset,amount, onBehalfOf, to)), 0, false, bytes32(0)
+            address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticWithdraw, (asset,amount, onBehalfOf, to)), 0, false, bytes32(0)
         );
     }
     
-    function _createAaveBorrowCall(
+    function _createMysticBorrowCall(
         address asset,
         uint256 amount,
         uint256 interestRateMode,
@@ -356,18 +358,18 @@ contract AaveLeverageBundler is Ownable {
         address receiver
     ) internal view returns (Call memory) {
         return _call(
-          address(aaveAdapter), abi.encodeCall(IAaveAdapter.aaveBorrow, (asset,amount,interestRateMode,onBehalfOf, receiver)), 0, false, bytes32(0)
+          address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticBorrow, (asset,amount,interestRateMode,onBehalfOf, receiver)), 0, false, bytes32(0)
         );
     }
     
-    function _createAaveRepayCall(
+    function _createMysticRepayCall(
         address asset,
         uint256 amount,
         uint256 interestRateMode,
         address onBehalfOf
     ) internal view returns (Call memory) {
         return _call(
-            address(aaveAdapter), abi.encodeCall(IAaveAdapter.aaveRepay, (asset,amount,interestRateMode,onBehalfOf)), 0, false, bytes32(0)
+            address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticRepay, (asset,amount,interestRateMode,onBehalfOf)), 0, false, bytes32(0)
         );
     }
     
@@ -387,7 +389,7 @@ contract AaveLeverageBundler is Ownable {
         uint256 amount
     ) internal view returns (Call memory) {
         return _call(
-            address(aaveAdapter), abi.encodeCall(IAaveAdapter.erc20Transfer, (token, to, amount)), 0, false, bytes32(0)
+            address(mysticAdapter), abi.encodeCall(IMysticAdapter.erc20Transfer, (token, to, amount)), 0, false, bytes32(0)
         );
     }
 
@@ -408,7 +410,7 @@ contract AaveLeverageBundler is Ownable {
         uint256 amount
     ) internal view returns (Call memory) {
         return _call(
-            address(aaveAdapter),abi.encodeCall(IAaveAdapter.erc20TransferFrom, (token, from, to, amount)), 0, false, bytes32(0)
+            address(mysticAdapter),abi.encodeCall(IMysticAdapter.erc20TransferFrom, (token, from, to, amount)), 0, false, bytes32(0)
         );
     }
 
@@ -429,14 +431,7 @@ contract AaveLeverageBundler is Ownable {
         bool exactOutput
     ) internal view returns (Call memory) {
         return _call(
-            address(maverickAdapter), 
-            abi.encodeCall(
-                MaverickSwapAdapter.swapExactTokensForTokens, 
-                (tokenIn, tokenOut, amountIn, amountOutMin, slippage, address(this), 1e8)
-            ), 
-            0, 
-            false, 
-            bytes32(0)
+            address(maverickAdapter), abi.encodeCall( MaverickSwapAdapter.swapExactTokensForTokens, (tokenIn, tokenOut, amountIn, amountOutMin, slippage, address(this), 1e8)), 0, false, bytes32(0)
         );
     }
 
@@ -449,10 +444,10 @@ contract AaveLeverageBundler is Ownable {
         return Call(to, data, value, skipRevert, callbackHash);
     }
 
-    function updateAaveAdapter(address _newAaveAdapter) external onlyOwner {
-        require(_newAaveAdapter != address(0), "Adapter address is zero");
-        address oldAdapter = address(aaveAdapter);
-        aaveAdapter = IAaveAdapter(_newAaveAdapter);
+    function updateMysticAdapter(address _newMysticAdapter) external onlyOwner {
+        require(_newMysticAdapter != address(0), "Adapter address is zero");
+        address oldAdapter = address(mysticAdapter);
+        mysticAdapter = IMysticAdapter(_newMysticAdapter);
     }
 
     function updateMaverickAdapter(address _newMaverickAdapter) external onlyOwner {

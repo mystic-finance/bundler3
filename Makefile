@@ -11,22 +11,22 @@ plume-verify-bundler :; forge verify-contract 0x53838C7bdaa0d5693F342f88c8D1567e
 deploy-script-deploy-adapter :; forge script scripts/DeployAdapters.s.sol:DeployAdaptersAndBundler --chain 98866 --rpc-url https://phoenix-rpc.plumenetwork.xyz --broadcast --slow --verify --verifier blockscout --verifier-url https://phoenix-explorer.plumenetwork.xyz/api? --legacy --gas-estimate-multiplier 100 --delay 5 --account deployer
 
 
-test-open-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerElixirTest --mt testCreateOpenLeverageBundle  -vvvvvvv
-test-close-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerElixirTest --mt testCreateCloseLeverageBundle1  -vvvvvvv
-test-leverage-fork-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerRWATest  -vvvvv --gas-report
-test-leverage-fork-new-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerElixirTest  -vvvvv --gas-report 
+test-open-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest --mt testAddCollateralWithDifferentInputAsset  -vvvvvvv
+test-close-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerElixirTest --mt testCreateCloseLeverageBundle1  -vvvvvvv
+test-leverage-fork-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest  -vvv --gas-report
+test-leverage-fork-new-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerElixirTest  -vvvvv --gas-report 
 
 
-test-update-leverage-fork-increase-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageOnly  -vvvvvvv
-test-update-leverage-fork-decrease-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleDecreaseLeverageOnly  -vvvvvvv
+test-update-leverage-fork-increase-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageOnly  -vvvvvvv
+test-update-leverage-fork-decrease-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleDecreaseLeverageOnly  -vvvvvvv
 
 
-test-update-leverage-fork-add-amount :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleAddCollateralOnly  -vvvvvvv
-test-update-leverage-fork-remove-amount :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerElixirTest --mt testUpdateLeverageBundleRemoveAllCollateral  -vvvvvvv
+test-update-leverage-fork-add-amount :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleAddCollateralOnly  -vvvvvvv
+test-update-leverage-fork-remove-amount :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerElixirTest --mt testUpdateLeverageBundleRemoveAllCollateral  -vvvvvvv
 
 
-test-update-leverage-fork-add-collateral :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleAddCollateralOnly  -vvvvvvv
-test-update-leverage-fork-add-collateral-and-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageAndAddCollateral  -vvvvvvv
-test-update-leverage-fork-add-collateral-and-remove-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageAndRemoveCollateral  -vvvvvvv
-test-update-leverage-fork-remove-collateral-and-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleDecreaseLeverageAndAddCollateral  -vvvvvvv
-test-update-leverage-fork-remove-collateral-and-add-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc AaveLeverageBundlerTest --mt testUpdateLeverageBundleDecreaseLeverageAndRemoveCollateral  -vvvvvvv
+test-update-leverage-fork-add-collateral :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleAddCollateralOnly  -vvvvvvv
+test-update-leverage-fork-add-collateral-and-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageAndAddCollateral  -vvvvvvv
+test-update-leverage-fork-add-collateral-and-remove-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageAndRemoveCollateral  -vvvvvvv
+test-update-leverage-fork-remove-collateral-and-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleDecreaseLeverageAndAddCollateral  -vvvvvvv
+test-update-leverage-fork-remove-collateral-and-add-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleDecreaseLeverageAndRemoveCollateral  -vvvvvvv

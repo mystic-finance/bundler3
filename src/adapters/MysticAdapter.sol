@@ -13,28 +13,28 @@ import {IFlashLoanReceiver} from "../interfaces/IFlashLoanReceiver.sol";
 import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {IAavePriceOracle} from "../interfaces/IPriceOracle.sol";
 
-/// @notice Chain agnostic adapter contract for Aave V3.
-contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
+/// @notice Chain agnostic adapter contract for Mystic V3.
+contract MysticAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
     using SafeCast160 for uint256;
     using MathRayLib for uint256;
     uint256 public constant INTEREST_RATE_MODE_STABLE = 1;
     uint256 public constant INTEREST_RATE_MODE_VARIABLE = 2;
     uint16 public constant REFERRAL_CODE = 0;
-    IPool public immutable AAVE_POOL;
+    IPool public immutable MYSTIC_POOL;
     IWNative public immutable WRAPPED_NATIVE;
-    constructor(address bundler3, address aavePool, address wNative) CoreAdapter(bundler3) Ownable(msg.sender) {
-        require(aavePool != address(0), ErrorsLib.ZeroAddress());
+    constructor(address bundler3, address mysticPool, address wNative) CoreAdapter(bundler3) Ownable(msg.sender) {
+        require(mysticPool != address(0), ErrorsLib.ZeroAddress());
         require(wNative != address(0), ErrorsLib.ZeroAddress());
 
-        AAVE_POOL = IPool(aavePool);
+        MYSTIC_POOL = IPool(mysticPool);
         WRAPPED_NATIVE = IWNative(wNative);
     }
 
     function flashLoanFee(uint256 amount) external view returns (uint256) {
-        return AAVE_POOL.FLASHLOAN_PREMIUM_TOTAL() * amount / 10000;
+        return MYSTIC_POOL.FLASHLOAN_PREMIUM_TOTAL() * amount / 10000;
     }
 
-    function aaveSupply(address asset, uint256 amount, address onBehalf, bool useAsCollateral)
+    function mysticSupply(address asset, uint256 amount, address onBehalf, bool useAsCollateral)
         external
         onlyBundler3
     {
@@ -45,18 +45,18 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
             require(amount != 0, ErrorsLib.ZeroAmount());
         }
 
-        SafeERC20.forceApprove(IERC20(asset), address(AAVE_POOL), type(uint256).max);
-        AAVE_POOL.supply(asset, amount, onBehalf, REFERRAL_CODE);
-        
+        SafeERC20.forceApprove(IERC20(asset), address(MYSTIC_POOL), type(uint256).max);
+        MYSTIC_POOL.supply(asset, amount, onBehalf, REFERRAL_CODE);
+        SafeERC20.safeTransfer(IERC20(asset), onBehalf,  IERC20(asset).balanceOf(address(this)));
     }
 
-    function aaveWithdraw(address asset, uint256 amount, address onBehalf, address receiver)
+    function mysticWithdraw(address asset, uint256 amount, address onBehalf, address receiver)
         external
         onlyBundler3
     {
         require(receiver != address(0) || receiver == address(this), ErrorsLib.ZeroAddress());
         require(amount != 0, ErrorsLib.ZeroAmount());
-        ReserveData memory reserveData = IPool(address(AAVE_POOL)).getReserveData(asset);
+        ReserveData memory reserveData = IPool(address(MYSTIC_POOL)).getReserveData(asset);
         uint256 balance = IERC20(reserveData.aTokenAddress).balanceOf(onBehalf);
 
         if(amount == type(uint256).max) {
@@ -68,14 +68,13 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
             amount = balance;
         }
         
-
         SafeERC20.safeTransferFrom(IERC20(reserveData.aTokenAddress), onBehalf, address(this), balance);
-        uint256 withdrawnAmount = AAVE_POOL.withdraw(asset, amount, receiver);
+        uint256 withdrawnAmount = MYSTIC_POOL.withdraw(asset, amount, receiver);
         require(withdrawnAmount > 0, ErrorsLib.ZeroAmount());
         SafeERC20.safeTransfer(IERC20(reserveData.aTokenAddress), onBehalf,  IERC20(reserveData.aTokenAddress).balanceOf(address(this))); //refund any remaining atoken
     }
 
-    function aaveBorrow(address asset, uint256 amount, uint256 interestRateMode, address from, address receiver)
+    function mysticBorrow(address asset, uint256 amount, uint256 interestRateMode, address from, address receiver)
         external
         onlyBundler3
     {
@@ -94,15 +93,14 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
             require(amount != 0, ErrorsLib.ZeroAmount());
         }
 
-
-        AAVE_POOL.borrow(asset, amount, interestRateMode, REFERRAL_CODE, initiator);
+        MYSTIC_POOL.borrow(asset, amount, interestRateMode, REFERRAL_CODE, initiator);
         
         if (receiver != address(this)) {
-            SafeERC20.safeTransfer(IERC20(asset), receiver, amount);
+            SafeERC20.safeTransfer(IERC20(asset), receiver,  IERC20(asset).balanceOf(address(this)));
         }
     }
 
-    function aaveRepay(address asset, uint256 amount, uint256 interestRateMode, address onBehalf)
+    function mysticRepay(address asset, uint256 amount, uint256 interestRateMode, address onBehalf)
         external
         onlyBundler3
     {
@@ -117,21 +115,21 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
             require(amount != 0, ErrorsLib.ZeroAmount());
         }
 
-        SafeERC20.forceApprove(IERC20(asset), address(AAVE_POOL), type(uint256).max);
-        uint256 repaidAmount = AAVE_POOL.repay(asset, amount, interestRateMode, onBehalf);
+        SafeERC20.forceApprove(IERC20(asset), address(MYSTIC_POOL), type(uint256).max);
+        uint256 repaidAmount = MYSTIC_POOL.repay(asset, amount, interestRateMode, onBehalf);
         require(repaidAmount > 0, ErrorsLib.ZeroAmount());
         SafeERC20.safeTransfer(IERC20(asset), onBehalf,  IERC20(asset).balanceOf(address(this)));
     }
 
-    function aaveSetUserUseReserveAsCollateral(address asset, bool useAsCollateral)
+    function mysticSetUserUseReserveAsCollateral(address asset, bool useAsCollateral)
         external
         onlyBundler3
     {
-        AAVE_POOL.setUserUseReserveAsCollateral(asset, useAsCollateral);
+        MYSTIC_POOL.setUserUseReserveAsCollateral(asset, useAsCollateral);
     }
 
-    /// @notice Triggers a flash loan on Aave.
-    function aaveFlashLoan(
+    /// @notice Triggers a flash loan on Mystic.
+    function mysticFlashLoan(
         address[] calldata assets,
         uint256[] calldata amounts,
         uint256[] calldata interestRateModes,
@@ -147,11 +145,11 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
         for (uint256 i = 0; i < assets.length; i++) {
             require(amounts[i] != 0, ErrorsLib.ZeroAmount());
             
-            // Aave's allowance is not reset as it is trusted.
-            SafeERC20.forceApprove(IERC20(assets[i]), address(AAVE_POOL), type(uint256).max);
+            // Mystic's allowance is not reset as it is trusted.
+            SafeERC20.forceApprove(IERC20(assets[i]), address(MYSTIC_POOL), type(uint256).max);
         }
 
-        AAVE_POOL.flashLoan(
+        MYSTIC_POOL.flashLoan(
             address(this),
             assets,
             amounts,
@@ -189,33 +187,33 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
         address initiator,
         bytes calldata params
     ) external override returns (bool) {
-        require(msg.sender == address(AAVE_POOL), ErrorsLib.UnauthorizedSender());
+        require(msg.sender == address(MYSTIC_POOL), ErrorsLib.UnauthorizedSender());
         require(initiator == address(this), ErrorsLib.UnauthorizedSender());
         
         reenterBundler3(params);
         for (uint256 i = 0; i < assets.length; i++) {
             uint256 amountOwed = amounts[i] + premiums[i];
-            SafeERC20.forceApprove(IERC20(assets[i]), address(AAVE_POOL), amountOwed);
+            SafeERC20.forceApprove(IERC20(assets[i]), address(MYSTIC_POOL), amountOwed);
         }
         return true;
     }
 
     function getAvailableLiquidity(address asset) external view returns (uint256) {
-        ReserveData memory reserveData = AAVE_POOL.getReserveData(asset);
+        ReserveData memory reserveData = MYSTIC_POOL.getReserveData(asset);
         return IERC20(asset).balanceOf(reserveData.aTokenAddress);
     }
 
     function getMainUserAccountData(address user) public view returns (uint256, uint256, uint256, uint256, uint256) {
-         (uint256 totalCollateral, uint256 totalDebt , uint256 availableBorrowsETH, ,uint256 ltv , uint256 healthfactor) = AAVE_POOL.getUserAccountData(user);
+         (uint256 totalCollateral, uint256 totalDebt , uint256 availableBorrowsETH, ,uint256 ltv , uint256 healthfactor) = MYSTIC_POOL.getUserAccountData(user);
          return (totalCollateral,totalDebt, availableBorrowsETH, ltv, healthfactor);
     }
 
     function getAssetPrice(address asset) public view returns (uint256) {
-        return IAavePriceOracle(IAaveProvider(AAVE_POOL.ADDRESSES_PROVIDER()).getPriceOracle()).getAssetPrice(address(asset));
+        return IAavePriceOracle(IAaveProvider(MYSTIC_POOL.ADDRESSES_PROVIDER()).getPriceOracle()).getAssetPrice(address(asset));
     }
 
     function getAssetLtv(address asset) external view returns (uint256) {
-        ReserveData memory reserveData = AAVE_POOL.getReserveData(asset);
+        ReserveData memory reserveData = MYSTIC_POOL.getReserveData(asset);
         uint256 LTV_MASK = 0xFFFF;
         uint256 LTV_START_BIT_POSITION = 0;
         uint256 ltv = (reserveData.configuration.data & LTV_MASK) >> LTV_START_BIT_POSITION;
@@ -223,7 +221,7 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
     }
 
     function getBorrowableLiquidity(address user, address asset) public view returns (uint256) {
-        address[] memory reserves = AAVE_POOL.getReservesList();
+        address[] memory reserves = MYSTIC_POOL.getReservesList();
         uint256 totalCollateralETH = 0;
         uint256 totalDebtETH = 0;
         uint256 LTV_MASK = 0xFFFF;
@@ -231,7 +229,7 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
         
         for (uint256 i = 0; i < reserves.length; i++) {
             address reserve = reserves[i];
-            ReserveData memory reserveData = AAVE_POOL.getReserveData(reserve);
+            ReserveData memory reserveData = MYSTIC_POOL.getReserveData(reserve);
             uint256 assetPrice = getAssetPrice(reserve);
             uint256 decimals = IERC20Metadata(reserve).decimals();
             uint256 aTokenBalance = IERC20(reserveData.aTokenAddress).balanceOf(user);
@@ -258,7 +256,7 @@ contract AaveAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
     }
 
     function getWithdrawableLiquidity(address user, address asset) public view returns(uint256) {
-        ReserveData memory reserveData = IPool(address(AAVE_POOL)).getReserveData(asset);
+        ReserveData memory reserveData = IPool(address(MYSTIC_POOL)).getReserveData(asset);
         uint256 balance = IERC20(reserveData.aTokenAddress).balanceOf(user);
         uint256 amount = getBorrowableLiquidity(user, asset);
 
