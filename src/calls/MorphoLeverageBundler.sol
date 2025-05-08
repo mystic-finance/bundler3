@@ -1,453 +1,384 @@
 // // SPDX-License-Identifier: GPL-2.0-or-later
 // pragma solidity 0.8.28;
 
-// import {MarketParams, IMorpho} from "../../lib/morpho-blue/src/interfaces/IMorpho.sol";
 // import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 // import {IBundler3, Call} from "../interfaces/IBundler3.sol";
 // import {IMaverickV2Pool} from "../interfaces/IMaverickV2Pool.sol";
 // import {IMaverickV2Factory} from "../interfaces/IMaverickV2Factory.sol";
 // import {IMaverickV2Quoter} from "../interfaces/IMaverickV2Quoter.sol";
 // import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+// import {IMysticAdapter} from "../interfaces/IMysticAdapter.sol";
+// import { IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+// import {ErrorsLib} from "../libraries/ErrorsLib.sol";
+// import {MaverickSwapAdapter} from "../adapters/MaverickAdapter.sol";
+
 
 // /**
-//  * @title MorphoLeverageBundler
-//  * @notice Creates bundles of calls for leveraged positions on Morpho using flashloans and Maverick swap
+//  * @title MysticLeverageBundler
+//  * @notice Creates bundles of calls for leveraged positions on Mystic using flashloans and Maverick swap
 //  * @dev Uses bundler to create sequences of calls for execution in a single transaction
 //  */
-// contract MorphoLeverageBundler is Ownable {
+// // we expect leverage against derivatives ie nrwa/pusd, ntbill/pusd, nelixir/pusd
+// contract MysticLeverageBundler is Ownable {
 //     // Bundler contract
 //     IBundler3 public immutable bundler;
-    
-//     // Morpho protocol
-//     IMorpho public immutable morpho;
-    
-//     // Maverick components
-//     IMaverickV2Factory public immutable factory;
-//     IMaverickV2Quoter public immutable quoter;
+//     IMysticAdapter public mysticAdapter;
+//     MaverickSwapAdapter public maverickAdapter;
     
 //     // Constants
 //     uint256 public constant SLIPPAGE_SCALE = 10000; // 10000 = 100%
 //     uint256 public constant DEFAULT_SLIPPAGE = 9700; // 97%, or 3% slippage allowance
+//     uint256 public constant VARIABLE_RATE_MODE = 2; // Mystic variable interest rate mode
+
+//     mapping(bytes32 => uint256) public totalBorrows;
+//     mapping(bytes32 => uint256) public totalCollaterals;
+//     mapping(bytes32 => mapping(address => uint256)) public totalBorrowsPerUser;
+//     mapping(bytes32 => mapping(address => uint256)) public totalCollateralsPerUser;
     
 //     // Events
 //     event BundleCreated(address indexed user, bytes32 indexed operationType, uint256 bundleSize);
-    
-//     /**
-//      * @param _bundler Bundler contract address
-//      * @param _morpho Morpho protocol address
-//      * @param _factory Maverick factory address
-//      * @param _quoter Maverick quoter address
-//      */
+//     event LeverageOpened(address indexed user, address collateralToken, address borrowToken, uint256 initialCollateral, uint256 leverageMultiplier, uint256 totalCollateral, uint256 totalBorrowed);
+//     event LeverageClosed(address indexed user, address collateralToken, address borrowToken, uint256 collateralReturned, uint256 totalCollateral, uint256 totalBorrowed);
+//     event LeverageUpdated(address indexed user, address collateralToken, address borrowToken, uint256 initialCollateral, uint256 oldLeverageMultiplier, uint256 newLeverageMultiplier, uint256 totalCollateral, uint256 totalBorrowed);
+
 //     constructor(
 //         address _bundler,
-//         address _morpho,
-//         address _factory,
-//         address _quoter
+//         address _mysticAdapter,
+//         address _maverickAdapter
 //     ) Ownable(msg.sender) {
 //         bundler = IBundler3(_bundler);
-//         morpho = IMorpho(_morpho);
-//         factory = IMaverickV2Factory(_factory);
-//         quoter = IMaverickV2Quoter(_quoter);
+//         mysticAdapter = IMysticAdapter(_mysticAdapter);
+//         maverickAdapter = MaverickSwapAdapter(_maverickAdapter);
 //     }
-    
-//     /**
-//      * @notice Creates a bundle to open a leveraged position using a flashloan
-//      * @param marketParams The market parameters for Morpho
-//      * @param initialCollateralAmount Amount of initial collateral
-//      * @param targetLeverage Target leverage ratio (in 1e4 format, e.g. 20000 = 2x)
-//      * @param slippageTolerance Minimum acceptable slippage (9700 = 3% slippage)
-//      * @return bundle Array of calls to execute
-//      */
-//     function createOpenLeverageBundle(
-//         MarketParams calldata marketParams,
-//         uint256 initialCollateralAmount,
-//         uint256 targetLeverage,
-//         uint256 slippageTolerance
-//     ) external view returns (Call[] memory bundle) {
-//         require(initialCollateralAmount > 0, "Zero collateral amount");
-//         require(targetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
-//         require(targetLeverage <= 50000, "Leverage too high"); // Max 5x
-        
-//         // Set default slippage if not specified
+
+//     function getPairKey(address borrowToken, address collateralToken) public pure returns (bytes32) {
+//         return keccak256(abi.encodePacked(borrowToken, collateralToken));
+//     }
+
+//     function createOpenLeverageBundle(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
+//       require(initialCollateralAmount > 0, "Zero collateral amount");
+//       require(targetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
+//       require(targetLeverage <= 1000000, "Leverage too high");
+      
+//       uint256 positionSize = initialCollateralAmount * targetLeverage / SLIPPAGE_SCALE;
+//       uint256 borrowAmount = positionSize - initialCollateralAmount;
+
+//       IERC20(collateralAsset).approve(address(mysticAdapter), type(uint256).max);
+//       IERC20(asset).approve(address(mysticAdapter), type(uint256).max);
+      
+//       // Check if there's enough liquidity for flashloan
+//       if (mysticAdapter.getAvailableLiquidity(asset) > positionSize) {
+//           return _createOpenLeverageBundleWithFlashloan(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
+//       } else { // loop can still accomodate smaller leverages even with insufficient liqudiity in a pool, there will be a warning in the frontend though
+//           return _createOpenLeverageBundleWithLoops(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
+//       }
+//     }
+//     function _createOpenLeverageBundleWithFlashloan(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
+//         require(inputAsset == collateralAsset || inputAsset == asset, "Input asset must be the same as collateral asset or asset");
 //         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
+//         uint256 collateralValue = inputAsset == collateralAsset ? initialCollateralAmount : getQuote(inputAsset, collateralAsset, initialCollateralAmount);
+//         uint256 positionSize = collateralValue * targetLeverage / SLIPPAGE_SCALE;
+//         uint256 borrowAmount = getQuote(collateralAsset, asset, positionSize - collateralValue);
+//         bytes32 pairKey = getPairKey(asset, collateralAsset);
         
-//         // Calculate borrow amount based on target leverage
-//         uint256 positionSize = initialCollateralAmount * targetLeverage / SLIPPAGE_SCALE;
-//         uint256 borrowAmount = positionSize - initialCollateralAmount;
-        
-//         // Create a bundle of calls
-//         Call[] memory mainBundle = new Call[](3);
-//         Call[] memory flashloanCallbackBundle = new Call[](4);
-        
-//         // 1. First transfer collateral from user
-//         mainBundle[0] = _createERC20TransferFromCall(
-//             marketParams.collateralToken,
-//             msg.sender, 
-//             address(this), 
-//             initialCollateralAmount
-//         );
-        
-//         // 2. Supply initial collateral to Morpho
-//         mainBundle[1] = _createMorphoSupplyCollateralCall(
-//             marketParams,
-//             initialCollateralAmount,
-//             msg.sender,
-//             ""
-//         );
-        
-//         // --- Flashloan callback operations ---
-        
-//         // 3a. In callback: Swap borrowed tokens for more collateral
-//         flashloanCallbackBundle[0] = _createMaverickSwapCall(
-//             marketParams.loanToken,
-//             marketParams.collateralToken,
-//             borrowAmount,
-//             borrowAmount * slippage / SLIPPAGE_SCALE // Min output with slippage
-//         );
-        
-//         // 3b. In callback: Supply swapped collateral to user's position
-//         flashloanCallbackBundle[1] = _createMorphoSupplyCollateralCall(
-//             marketParams,
-//             type(uint256).max, // All available collateral after swap
-//             msg.sender,
-//             ""
-//         );
-        
-//         // 3c. In callback: Borrow to repay flashloan
-//         flashloanCallbackBundle[2] = _createMorphoBorrowCall(
-//             marketParams,
-//             borrowAmount,
-//             0, // No shares specified
-//             msg.sender,
-//             address(this)
-//         );
-        
-//         // 3d. In callback: Approve loan token for flashloan repayment
-//         flashloanCallbackBundle[3] = _createERC20ApproveCall(
-//             marketParams.loanToken,
-//             address(morpho),
-//             borrowAmount
-//         );
-        
-//         // 3. Execute flashloan with callback bundle
-//         mainBundle[2] = _createMorphoFlashloanCall(
-//             marketParams.loanToken,
-//             borrowAmount,
-//             abi.encode(flashloanCallbackBundle)
-//         );
+//         Call[] memory mainBundle = new Call[](2);
+//         Call[] memory flashloanCallbackBundle = new Call[](5);
+//         uint totalBorrowAmount = borrowAmount + mysticAdapter.flashLoanFee(borrowAmount) + 1; // +1 for rounding buffer
+
+//         // Compressed callback bundle creation
+//         flashloanCallbackBundle[0] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
+//         flashloanCallbackBundle[1] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0, slippage, false);
+//         flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
+//         flashloanCallbackBundle[3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+//         flashloanCallbackBundle[4] = _createMysticBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(mysticAdapter));
+
+//         // Compressed main bundle creation
+//         mainBundle[0] = inputAsset == collateralAsset ? _createERC20TransferFromCall(collateralAsset,msg.sender,address(this),initialCollateralAmount) : _createERC20TransferFromCall(asset,msg.sender,address(maverickAdapter),initialCollateralAmount);
+//         mainBundle[1] = _createMysticFlashloanCall(asset,borrowAmount,false,abi.encode(flashloanCallbackBundle));
+
+//         bundler.multicall(mainBundle);
+
+//         totalBorrows[pairKey] += borrowAmount; 
+//         totalCollaterals[pairKey] += positionSize;
+//         totalBorrowsPerUser[pairKey][msg.sender] += borrowAmount; 
+//         totalCollateralsPerUser[pairKey][msg.sender] += positionSize;
         
 //         emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
+//         emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
         
 //         return mainBundle;
 //     }
-    
-//     /**
-//      * @notice Creates a bundle to close a leveraged position using a flashloan
-//      * @param marketParams The market parameters for Morpho
-//      * @param slippageTolerance Minimum acceptable slippage (9700 = 3% slippage)
-//      * @return bundle Array of calls to execute
-//      */
-//     function createCloseLeverageBundle(
-//         MarketParams calldata marketParams,
-//         uint256 slippageTolerance
-//     ) external view returns (Call[] memory bundle) {
-//         // Set default slippage if not specified
+
+//     function _createOpenLeverageBundleWithLoops(address asset, address collateralAsset, address inputAsset,  uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
+//         // very expensive gas wise, with a limit of 25 loops(4x leverage), and extremely ineffective, only to be used if pool cannot fulfill flashloan
+//         // we understand that iterations != leverage but fo the sake of limiting gas, we assume iteration == loop instead of 1-ltv**(n+1)/1-ltv, where n is iteration
+//         require(inputAsset != collateralAsset, "Input asset must be the same as collateral asset");
 //         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
+//         uint256 ltv = mysticAdapter.getAssetLtv(collateralAsset);
+//         uint8 loop = 20;
+//         bytes32 pairKey = getPairKey(asset, collateralAsset);
+//         require(ltv > 0, "Collateral asset has no LTV");
         
-//         // Create main bundle and callback bundle
-//         Call[] memory mainBundle = new Call[](1);
-//         Call[] memory flashloanCallbackBundle = new Call[](5);
+//         Call[] memory mainBundle = new Call[](2+ loop*4);
+//         mainBundle[0] = _createERC20TransferFromCall(inputAsset,msg.sender,address(mysticAdapter),initialCollateralAmount);
+//         mainBundle[1] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+//         uint256 newCollateral = initialCollateralAmount;
+//         totalCollaterals[pairKey] += newCollateral;
+//         totalCollateralsPerUser[pairKey][msg.sender] += newCollateral;
+
+//         for (uint8 i=0; i< loop; i++){
+//           uint256 idx = 2 + i * 4;
+//           mainBundle[idx] = _createMysticBorrowCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender, address(maverickAdapter));
+//           mainBundle[idx+1] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0, slippage, false);
+//           mainBundle[idx+2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
+//           mainBundle[idx+3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+
+//           newCollateral = newCollateral * ltv / SLIPPAGE_SCALE;
+//           uint256 newBorrow = getQuote(collateralAsset, asset, newCollateral) * ltv / SLIPPAGE_SCALE;
+//           totalBorrows[pairKey] += newBorrow; 
+//           totalCollaterals[pairKey] += newCollateral;
+//           totalBorrowsPerUser[pairKey][msg.sender] += newBorrow; 
+//           totalCollateralsPerUser[pairKey][msg.sender] += newCollateral;
+          
+//           uint leverage = (totalCollateralsPerUser[pairKey][msg.sender]) * SLIPPAGE_SCALE / (totalCollateralsPerUser[pairKey][msg.sender] - totalBorrowsPerUser[pairKey][msg.sender]);
+//           if (leverage >= (targetLeverage * 9000) / SLIPPAGE_SCALE) break; // break if leverage gotten is in similar range as expected 10% error margin 4 -> 3.6 is fine
+//         }
+
+//         bundler.multicall(mainBundle);
+
+//         emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
+//         emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
+//         return mainBundle;
+//     }
+
+//     function createCloseLeverageBundle(address asset, address collateralAsset, uint256 debtToClose) external returns (Call[] memory bundle) {
+//       bytes32 pairKey = getPairKey(asset, collateralAsset);
+//       if(debtToClose == type(uint256).max || totalBorrowsPerUser[pairKey][msg.sender] <= debtToClose) {
+//         debtToClose = totalBorrowsPerUser[pairKey][msg.sender];
+//       }
+
+//       require(debtToClose > 0, "no debt found");
+      
+//       // Check if there's enough liquidity for flashloan or if we're closing a small position
+//       if (mysticAdapter.getAvailableLiquidity(asset) > debtToClose) {
+//         return _createCloseLeverageBundleWithFlashloan(asset, collateralAsset, debtToClose);
+//       } else {
+//         return _createCloseLeverageBundleWithLoops(asset, collateralAsset, debtToClose);
+//       }
+//     }
+    
+//     function _createCloseLeverageBundleWithFlashloan(address asset, address collateralAsset, uint256 debtToClose) internal returns (Call[] memory bundle) {
+//         Call[] memory mainBundle = new Call[](5);
+//         Call[] memory flashloanCallbackBundle = new Call[](4);
+//         bytes32 pairKey = getPairKey(asset, collateralAsset);
+
+//         uint256 debtToCover = debtToClose;
+//         uint totalBorrowAmount = debtToCover + mysticAdapter.flashLoanFee(debtToCover) + 1; // +1 for rounding buffer
+//         uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * debtToCover) / totalBorrowsPerUser[pairKey][msg.sender];
+                
+//          // Compressed callback bundle creation
+//         flashloanCallbackBundle[0] = _createMysticRepayCall(asset, debtToCover, VARIABLE_RATE_MODE, msg.sender);
+//         flashloanCallbackBundle[1] = _createMysticWithdrawCall(collateralAsset, collateralForRepayment, msg.sender, address(maverickAdapter));
+//         flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, asset, collateralForRepayment, totalBorrowAmount , 0, false);
+//         flashloanCallbackBundle[3] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
         
-//         // Get total debt to repay via flashloan
-//         uint256 borrowShares = morpho.position(marketParams.id(), msg.sender).borrowShares;
-//         require(borrowShares > 0, "No debt to repay");
-//         uint256 totalDebt = morpho.borrowShareToAssetAmount(marketParams.id(), borrowShares);
+//         // Compressed main bundle creation
+//         mainBundle[0] = _createMysticFlashloanCall(asset,debtToCover,false, abi.encode(flashloanCallbackBundle));
+//         mainBundle[1] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
+//         mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , 0, false);
+//         mainBundle[3] = _createERC20TransferCall(collateralAsset, address(this), type(uint256).max);
+//         mainBundle[4] = _createERC20TransferFromCall(collateralAsset, address(this), msg.sender, type(uint256).max);
         
-//         // --- Flashloan callback operations ---
-        
-//         // a. In callback: Withdraw collateral to sell
-//         // We need to calculate precisely how much collateral to withdraw based on the debt
-//         uint256 collateralToWithdraw = morpho.position(marketParams.id(), msg.sender).collateral;
-        
-//         // Use the max necessary collateral based on price + slippage
-//         flashloanCallbackBundle[0] = _createMorphoWithdrawCollateralCall(
-//             marketParams,
-//             collateralToWithdraw,
-//             msg.sender,
-//             address(this)
-//         );
-        
-//         // b. In callback: Swap collateral for loan token to repay flashloan
-//         flashloanCallbackBundle[1] = _createMaverickSwapCall(
-//             marketParams.collateralToken,
-//             marketParams.loanToken,
-//             type(uint256).max, // All withdrawn collateral
-//             totalDebt * slippage / SLIPPAGE_SCALE // Min output with slippage
-//         );
-        
-//         // c. In callback: Repay borrowed position
-//         flashloanCallbackBundle[2] = _createMorphoRepayCall(
-//             marketParams,
-//             0, // Amount is calculated from shares
-//             borrowShares,
-//             msg.sender,
-//             ""
-//         );
-        
-//         // d. In callback: Withdraw remaining collateral to user
-//         flashloanCallbackBundle[3] = _createMorphoWithdrawCollateralCall(
-//             marketParams,
-//             type(uint256).max, // All remaining collateral
-//             msg.sender,
-//             msg.sender
-//         );
-        
-//         // e. In callback: Approve loan token for flashloan repayment
-//         flashloanCallbackBundle[4] = _createERC20ApproveCall(
-//             marketParams.loanToken,
-//             address(morpho),
-//             totalDebt
-//         );
-        
-//         // Execute flashloan with callback bundle
-//         mainBundle[0] = _createMorphoFlashloanCall(
-//             marketParams.loanToken,
-//             totalDebt,
-//             abi.encode(flashloanCallbackBundle)
-//         );
+//         bundler.multicall(mainBundle);
+
+//         // Update tracking
+//         totalBorrows[pairKey] -= debtToCover;
+//         totalCollaterals[pairKey] -= collateralForRepayment;
+//         totalBorrowsPerUser[pairKey][msg.sender] -= debtToCover;
+//         totalCollateralsPerUser[pairKey][msg.sender] -= collateralForRepayment;
         
 //         emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE"), mainBundle.length);
+//         emit LeverageClosed(msg.sender, collateralAsset, asset, collateralForRepayment, totalCollaterals[pairKey], totalBorrows[pairKey]);
         
 //         return mainBundle;
 //     }
+
+//     function _createCloseLeverageBundleWithLoops(address asset, address collateralAsset, uint256 debtToClose) internal returns (Call[] memory bundle) {
+//       bytes32 pairKey = getPairKey(asset, collateralAsset);
+//       uint256 collateralToWithdraw = (totalCollateralsPerUser[pairKey][msg.sender] * debtToClose) / totalBorrowsPerUser[pairKey][msg.sender];
+//       uint256 leverage = (totalCollateralsPerUser[pairKey][msg.sender]) / (totalCollateralsPerUser[pairKey][msg.sender] - totalBorrowsPerUser[pairKey][msg.sender]);
+//       uint256 ltv = mysticAdapter.getAssetLtv(collateralAsset);
+//       uint8 numLoops = 20;
+//       uint256 remainingDebt = debtToClose;
+//       uint256 borrowable = mysticAdapter.getWithdrawableLiquidity(msg.sender, collateralAsset);
+
+//       Call[] memory mainBundle = new Call[](numLoops * 4+1); 
+      
+//       // For each loop iteration
+//       for (uint8 i = 0; i < numLoops; i++) {
+//           uint256 baseIndex = i * 4;
+//           mainBundle[baseIndex + 0] = _createMysticWithdrawCall(collateralAsset, type(uint256).max, msg.sender, address(maverickAdapter));
+//           mainBundle[baseIndex + 1] = _createMaverickSwapCall(collateralAsset, asset, type(uint256).max, 0, 0, false);
+//           mainBundle[baseIndex + 2] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
+//           mainBundle[baseIndex + 3] = _createMysticRepayCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender);
+          
+//           remainingDebt = remainingDebt > borrowable? remainingDebt - borrowable:0;
+//           borrowable = borrowable * SLIPPAGE_SCALE/ ltv;
+//           if(remainingDebt == 0) break;
+//       }
+      
+//       mainBundle[numLoops * 4] = _createMysticWithdrawCall(collateralAsset, type(uint256).max, msg.sender, msg.sender);
+//       uint spentCollateral = getQuote(asset, collateralAsset, debtToClose - remainingDebt);
+//       bundler.multicall(mainBundle);
+      
+//       totalBorrows[pairKey] -= debtToClose - remainingDebt;
+//       totalCollaterals[pairKey] -= spentCollateral;
+//       totalBorrowsPerUser[pairKey][msg.sender] -= debtToClose - remainingDebt;
+//       totalCollateralsPerUser[pairKey][msg.sender] -= spentCollateral;
+      
+//       emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE_LOOPS"), mainBundle.length);
+//       emit LeverageClosed(msg.sender, collateralAsset, asset, collateralToWithdraw, totalCollaterals[pairKey], totalBorrows[pairKey]);
+      
+//       return mainBundle;
+//   }
     
-//     /**
-//      * @notice Creates a bundle to increase leverage on an existing position
-//      * @param marketParams The market parameters for Morpho
-//      * @param additionalBorrowAmount Additional amount to borrow
-//      * @param slippageTolerance Minimum acceptable slippage (9700 = 3% slippage)
-//      * @return bundle Array of calls to execute
-//      */
-//     function createIncreaseLeverageBundle(
-//         MarketParams calldata marketParams,
-//         uint256 additionalBorrowAmount,
-//         uint256 slippageTolerance
-//     ) external view returns (Call[] memory bundle) {
-//         require(additionalBorrowAmount > 0, "Zero borrow amount");
+  
+//   function updateLeverageBundle(
+//       address asset,
+//       address collateralAsset,
+//       uint256 newTargetLeverage,
+//       uint256 slippageTolerance
+//   ) external returns (Call[] memory bundle) {
+//       require(newTargetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
+//       require(newTargetLeverage <= 1000000, "Leverage too high"); // Max 100x
+//       bytes32 pairKey = getPairKey(asset, collateralAsset);
+      
+//       uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
+//       uint256 currentCollateral = totalCollateralsPerUser[pairKey][msg.sender];
+//       uint256 currentBorrow = totalBorrowsPerUser[pairKey][msg.sender];
+
+//       require(currentCollateral > 0 && currentBorrow > 0, "No existing position");
+//       uint256 currentLeverage = (currentCollateral * SLIPPAGE_SCALE) / (currentCollateral - currentBorrow);
+//       uint256 newPositionSize = (currentCollateral * newTargetLeverage) / currentLeverage;
+//       uint256 collateralDelta = newPositionSize > currentCollateral ? newPositionSize - currentCollateral: currentCollateral - newPositionSize;
+//       uint256 newBorrowTarget = getQuote(collateralAsset, asset, collateralDelta);
+//       int256 borrowDelta = currentLeverage > newTargetLeverage? - int256(newBorrowTarget):int256(newBorrowTarget);
+      
+//       // Create appropriate bundles based on the operation type
+//       Call[] memory mainBundle;
+//       Call[] memory flashloanCallbackBundle;
+ 
+//       if (borrowDelta > 0) {
+//           // INCREASE LEVERAGE CASE
+//         uint256 additionalBorrowAmount = uint256(borrowDelta);
+//         uint totalBorrowAmount = additionalBorrowAmount + mysticAdapter.flashLoanFee(additionalBorrowAmount) + 1;
+//         uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * additionalBorrowAmount) / totalBorrowsPerUser[pairKey][msg.sender];
+
+//         mainBundle = new Call[](1);
+//         flashloanCallbackBundle = new Call[](5);
+
+//         flashloanCallbackBundle[0] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
+//         flashloanCallbackBundle[1] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0, slippage, false);
+//         flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
+//         flashloanCallbackBundle[3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+//         flashloanCallbackBundle[4] = _createMysticBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(mysticAdapter));
+
+//         mainBundle[0] = _createMysticFlashloanCall(asset,additionalBorrowAmount,false,abi.encode(flashloanCallbackBundle));
         
-//         // Set default slippage if not specified
-//         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
+//         totalBorrows[pairKey] += additionalBorrowAmount;
+//         totalBorrowsPerUser[pairKey][msg.sender] += additionalBorrowAmount;
+//       } else if (borrowDelta < 0) {
+//         uint256 repayAmount = uint256(-borrowDelta);
+//         uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * repayAmount) / totalBorrowsPerUser[pairKey][msg.sender];
+          
+//         mainBundle = new Call[](5);
+//         flashloanCallbackBundle = new Call[](4);
+
+//         flashloanCallbackBundle[0] = _createMysticRepayCall(asset, repayAmount, VARIABLE_RATE_MODE, msg.sender);
+//         flashloanCallbackBundle[1] = _createMysticWithdrawCall(collateralAsset, collateralForRepayment, msg.sender, address(maverickAdapter));
+//         flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, asset, collateralForRepayment, repayAmount , 0, false);
+//         flashloanCallbackBundle[3] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
         
-//         // Create main bundle and callback bundle
-//         Call[] memory mainBundle = new Call[](1);
-//         Call[] memory flashloanCallbackBundle = new Call[](4);
+//         // Compressed main bundle creation
+//         mainBundle[0] = _createMysticFlashloanCall(asset,repayAmount,false, abi.encode(flashloanCallbackBundle));
+//         mainBundle[1] = _createERC20TransferCall(asset,address(maverickAdapter), type(uint256).max);
+//         mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , 0, false);
+//         mainBundle[3] = _createERC20TransferCall(collateralAsset,address(this), type(uint256).max);
+//         mainBundle[4] = _createERC20TransferFromCall(collateralAsset, address(this), msg.sender, type(uint256).max);
         
-//         // --- Flashloan callback operations ---
-        
-//         // a. In callback: Swap borrowed tokens for more collateral
-//         flashloanCallbackBundle[0] = _createMaverickSwapCall(
-//             marketParams.loanToken,
-//             marketParams.collateralToken,
-//             additionalBorrowAmount,
-//             additionalBorrowAmount * slippage / SLIPPAGE_SCALE // Min output with slippage
-//         );
-        
-//         // b. In callback: Supply swapped collateral to user's position
-//         flashloanCallbackBundle[1] = _createMorphoSupplyCollateralCall(
-//             marketParams,
-//             type(uint256).max, // All available collateral after swap
-//             msg.sender,
-//             ""
-//         );
-        
-//         // c. In callback: Borrow to repay flashloan
-//         flashloanCallbackBundle[2] = _createMorphoBorrowCall(
-//             marketParams,
-//             additionalBorrowAmount,
-//             0, // No shares specified
-//             msg.sender,
-//             address(this)
-//         );
-        
-//         // d. In callback: Approve loan token for flashloan repayment
-//         flashloanCallbackBundle[3] = _createERC20ApproveCall(
-//             marketParams.loanToken,
-//             address(morpho),
-//             additionalBorrowAmount
-//         );
-        
-//         // Execute flashloan with callback bundle
-//         mainBundle[0] = _createMorphoFlashloanCall(
-//             marketParams.loanToken,
-//             additionalBorrowAmount,
-//             abi.encode(flashloanCallbackBundle)
-//         );
-        
-//         emit BundleCreated(msg.sender, keccak256("INCREASE_LEVERAGE"), mainBundle.length);
-        
-//         return mainBundle;
-//     }
+//         totalBorrows[pairKey] -= repayAmount;
+//         totalBorrowsPerUser[pairKey][msg.sender] -= repayAmount;
+//       } else {
+//           revert("No changes to position");
+//       }
+      
+//       bundler.multicall(mainBundle);
+      
+//       emit BundleCreated(msg.sender, keccak256("UPDATE_LEVERAGE"), mainBundle.length);
+//       emit LeverageUpdated(msg.sender, collateralAsset, asset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
+      
+//       return mainBundle;
+//   }
     
-//     /**
-//      * @notice Creates a bundle to decrease leverage on an existing position
-//      * @param marketParams The market parameters for Morpho
-//      * @param repayAmount Amount to repay
-//      * @param slippageTolerance Minimum acceptable slippage (9700 = 3% slippage)
-//      * @return bundle Array of calls to execute
-//      */
-//     function createDecreaseLeverageBundle(
-//         MarketParams calldata marketParams,
-//         uint256 repayAmount,
-//         uint256 slippageTolerance
-//     ) external view returns (Call[] memory bundle) {
-//         require(repayAmount > 0, "Zero repay amount");
-        
-//         // Set default slippage if not specified
-//         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
-        
-//         // Create main bundle and callback bundle
-//         Call[] memory mainBundle = new Call[](1);
-//         Call[] memory flashloanCallbackBundle = new Call[](5);
-        
-//         // Get total debt
-//         uint256 totalDebt = morpho.borrowShareToAssetAmount(
-//             marketParams.id(), 
-//             morpho.position(marketParams.id(), msg.sender).borrowShares
-//         );
-//         require(repayAmount <= totalDebt, "Amount exceeds debt");
-        
-//         // --- Flashloan callback operations ---
-        
-//         // Calculate collateral to withdraw based on repay amount
-//         uint256 collateralToWithdraw = morpho.position(marketParams.id(), msg.sender).collateral * repayAmount / totalDebt;
-//         collateralToWithdraw = collateralToWithdraw * SLIPPAGE_SCALE / slippage; // Add slippage buffer
-        
-//         // a. In callback: Withdraw collateral to sell
-//         flashloanCallbackBundle[0] = _createMorphoWithdrawCollateralCall(
-//             marketParams,
-//             collateralToWithdraw,
-//             msg.sender,
-//             address(this)
-//         );
-        
-//         // b. In callback: Swap collateral for loan token to repay flashloan
-//         flashloanCallbackBundle[1] = _createMaverickSwapCall(
-//             marketParams.collateralToken,
-//             marketParams.loanToken,
-//             type(uint256).max, // All withdrawn collateral
-//             repayAmount * slippage / SLIPPAGE_SCALE // Min output with slippage
-//         );
-        
-//         // c. In callback: Repay portion of borrowed position
-//         flashloanCallbackBundle[2] = _createMorphoRepayCall(
-//             marketParams,
-//             repayAmount,
-//             0, // No shares specified
-//             msg.sender,
-//             ""
-//         );
-        
-//         // d. In callback: Return any excess tokens to user
-//         flashloanCallbackBundle[3] = _createERC20TransferCall(
-//             marketParams.loanToken,
-//             msg.sender,
-//             type(uint256).max // All remaining loan tokens
-//         );
-        
-//         // e. In callback: Approve loan token for flashloan repayment
-//         flashloanCallbackBundle[4] = _createERC20ApproveCall(
-//             marketParams.loanToken,
-//             address(morpho),
-//             repayAmount
-//         );
-        
-//         // Execute flashloan with callback bundle
-//         mainBundle[0] = _createMorphoFlashloanCall(
-//             marketParams.loanToken,
-//             repayAmount,
-//             abi.encode(flashloanCallbackBundle)
-//         );
-        
-//         emit BundleCreated(msg.sender, keccak256("DECREASE_LEVERAGE"), mainBundle.length);
-        
-//         return mainBundle;
-//     }
-    
-//     /* CALL GENERATORS */
-    
-//     function _createMorphoFlashloanCall(
-//         address token,
+//     function _createMysticFlashloanCall(
+//         address asset,
 //         uint256 amount,
+//         bool isDebtToken,
 //         bytes memory data
 //     ) internal view returns (Call memory) {
-//         return Call(
-//             address(morpho),
-//             abi.encodeCall(IMorpho.flashLoan, (token, amount, data)),
-//             0,
-//             false,
-//             data.length == 0 ? bytes32(0) : keccak256(data)
+//         address[] memory assets = new address[](1);
+//         uint256[] memory amounts = new uint256[](1);
+//         uint256[] memory modes = new uint256[](1);
+//         assets[0] = asset;
+//         amounts[0] = amount;
+//         modes[0] = isDebtToken ? 2 : 0; // 0 = no debt, 2 = variable rate debt
+        
+//         return _call(
+//             address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticFlashLoan, (assets,amounts,modes,data) ), 0, false, data.length == 0 ? bytes32(0) : keccak256(data)
 //         );
 //     }
     
-//     function _createMorphoSupplyCollateralCall(
-//         MarketParams memory marketParams,
-//         uint256 assets,
-//         address onBehalf,
-//         bytes memory data
+//     function _createMysticSupplyCall(
+//         address asset,
+//         uint256 amount,
+//         address onBehalfOf
 //     ) internal view returns (Call memory) {
-//         return Call(
-//             address(morpho),
-//             abi.encodeCall(IMorpho.supplyCollateral, (marketParams, assets, onBehalf, data)),
-//             0,
-//             false,
-//             data.length == 0 ? bytes32(0) : keccak256(data)
+//         return _call(
+//             address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticSupply, (asset,amount,onBehalfOf,true) ), 0, false, bytes32(0)
 //         );
 //     }
     
-//     function _createMorphoBorrowCall(
-//         MarketParams memory marketParams,
-//         uint256 assets,
-//         uint256 shares,
-//         address onBehalf,
+//     function _createMysticWithdrawCall(
+//         address asset,
+//         uint256 amount,
+//         address onBehalfOf,
+//         address to
+//     ) internal view returns (Call memory) {
+//         return _call(
+//             address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticWithdraw, (asset,amount, onBehalfOf, to)), 0, false, bytes32(0)
+//         );
+//     }
+    
+//     function _createMysticBorrowCall(
+//         address asset,
+//         uint256 amount,
+//         uint256 interestRateMode,
+//         address onBehalfOf,
 //         address receiver
 //     ) internal view returns (Call memory) {
-//         return Call(
-//             address(morpho),
-//             abi.encodeCall(IMorpho.borrow, (marketParams, assets, shares, onBehalf, receiver)),
-//             0,
-//             false,
-//             bytes32(0)
+//         return _call(
+//           address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticBorrow, (asset,amount,interestRateMode,onBehalfOf, receiver)), 0, false, bytes32(0)
 //         );
 //     }
     
-//     function _createMorphoRepayCall(
-//         MarketParams memory marketParams,
-//         uint256 assets,
-//         uint256 shares,
-//         address onBehalf,
-//         bytes memory data
+//     function _createMysticRepayCall(
+//         address asset,
+//         uint256 amount,
+//         uint256 interestRateMode,
+//         address onBehalfOf
 //     ) internal view returns (Call memory) {
-//         return Call(
-//             address(morpho),
-//             abi.encodeCall(IMorpho.repay, (marketParams, assets, shares, onBehalf, data)),
-//             0,
-//             false,
-//             data.length == 0 ? bytes32(0) : keccak256(data)
-//         );
-//     }
-    
-//     function _createMorphoWithdrawCollateralCall(
-//         MarketParams memory marketParams,
-//         uint256 assets,
-//         address onBehalf,
-//         address receiver
-//     ) internal view returns (Call memory) {
-//         return Call(
-//             address(morpho),
-//             abi.encodeCall(IMorpho.withdrawCollateral, (marketParams, assets, onBehalf, receiver)),
-//             0,
-//             false,
-//             bytes32(0)
+//         return _call(
+//             address(mysticAdapter), abi.encodeCall(IMysticAdapter.mysticRepay, (asset,amount,interestRateMode,onBehalfOf)), 0, false, bytes32(0)
 //         );
 //     }
     
@@ -455,13 +386,9 @@
 //         address token,
 //         address spender,
 //         uint256 amount
-//     ) internal pure returns (Call memory) {
-//         return Call(
-//             token,
-//             abi.encodeCall(IERC20.approve, (spender, amount)),
-//             0,
-//             false,
-//             bytes32(0)
+//     ) internal view returns (Call memory) {
+//         return _call(
+//             token, abi.encodeCall(IERC20.approve, (spender, amount)), 0, false, bytes32(0)
 //         );
 //     }
     
@@ -469,13 +396,19 @@
 //         address token,
 //         address to,
 //         uint256 amount
-//     ) internal pure returns (Call memory) {
-//         return Call(
-//             token,
-//             abi.encodeCall(IERC20.transfer, (to, amount)),
-//             0,
-//             false,
-//             bytes32(0)
+//     ) internal view returns (Call memory) {
+//         return _call(
+//             address(mysticAdapter), abi.encodeCall(IMysticAdapter.erc20Transfer, (token, to, amount)), 0, false, bytes32(0)
+//         );
+//     }
+
+//     function _createERC20TransferPureCall(
+//         address token,
+//         address to,
+//         uint256 amount
+//     ) internal view returns (Call memory) {
+//         return _call(
+//             address(token), abi.encodeCall(IERC20.transfer, (to, amount)), 0, false, bytes32(0)
 //         );
 //     }
     
@@ -484,48 +417,51 @@
 //         address from,
 //         address to,
 //         uint256 amount
-//     ) internal pure returns (Call memory) {
-//         return Call(
-//             token,
-//             abi.encodeCall(IERC20.transferFrom, (from, to, amount)),
-//             0,
-//             false,
-//             bytes32(0)
+//     ) internal view returns (Call memory) {
+//         return _call(
+//             address(mysticAdapter),abi.encodeCall(IMysticAdapter.erc20TransferFrom, (token, from, to, amount)), 0, false, bytes32(0)
 //         );
 //     }
-    
+
+//     function getQuote(
+//       address tokenIn,
+//       address tokenOut,
+//       uint256 amountIn
+//     ) internal returns (uint256) {
+//       require(tokenIn != address(0) && tokenOut != address(0), 'Invalid token address');
+//       return maverickAdapter.getSwapQuote(tokenIn, tokenOut, amountIn, false, 1e8);
+//     }
 //     function _createMaverickSwapCall(
 //         address tokenIn,
 //         address tokenOut,
 //         uint256 amountIn,
-//         uint256 amountOutMin
+//         uint256 amountOutMin,
+//         uint256 slippage,
+//         bool exactOutput
 //     ) internal view returns (Call memory) {
-//         // Use a pool lookup to find the best pool
-//         IMaverickV2Pool[] memory pools = factory.lookup(IERC20(tokenIn), IERC20(tokenOut), 0, 10);
-//         require(pools.length > 0, "No pool available");
-        
-//         // Select first pool for simplicity
-//         // In production, you might want to select the pool with the most liquidity
-//         IMaverickV2Pool pool = pools[0];
-        
-//         // Determine swap direction
-//         bool tokenAIn = pool.tokenA() == IERC20(tokenIn);
-//         int32 tickLimit = tokenAIn ? pool.getState().activeTick + 50 : pool.getState().activeTick - 50;
-        
-//         // Create swap parameters
-//         IMaverickV2Pool.SwapParams memory swapParams = IMaverickV2Pool.SwapParams({
-//             amount: amountIn,
-//             tokenAIn: tokenAIn,
-//             exactOutput: false,
-//             tickLimit: tickLimit
-//         });
-        
-//         return Call(
-//             address(pool),
-//             abi.encodeCall(IMaverickV2Pool.swap, (address(this), swapParams, "")),
-//             0,
-//             false,
-//             bytes32(0)
+//         return _call(
+//             address(maverickAdapter), abi.encodeCall( MaverickSwapAdapter.swapExactTokensForTokens, (tokenIn, tokenOut, amountIn, amountOutMin, slippage, address(this), 1e8)), 0, false, bytes32(0)
 //         );
+//     }
+
+//     function _call(address to, bytes memory data, uint256 value, bool skipRevert, bytes32 callbackHash)
+//         internal
+//         pure
+//         returns (Call memory)
+//     {
+//         require(to != address(0), "Adapter address is zero");
+//         return Call(to, data, value, skipRevert, callbackHash);
+//     }
+
+//     function updateMysticAdapter(address _newMysticAdapter) external onlyOwner {
+//         require(_newMysticAdapter != address(0), "Adapter address is zero");
+//         address oldAdapter = address(mysticAdapter);
+//         mysticAdapter = IMysticAdapter(_newMysticAdapter);
+//     }
+
+//     function updateMaverickAdapter(address _newMaverickAdapter) external onlyOwner {
+//         require(_newMaverickAdapter != address(0), "Adapter address is zero");
+//         address oldAdapter = address(maverickAdapter);
+//         maverickAdapter = MaverickSwapAdapter(_newMaverickAdapter);
 //     }
 // } 

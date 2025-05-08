@@ -30,10 +30,10 @@ contract MysticLeverageBundler is Ownable {
     uint256 public constant DEFAULT_SLIPPAGE = 9700; // 97%, or 3% slippage allowance
     uint256 public constant VARIABLE_RATE_MODE = 2; // Mystic variable interest rate mode
 
-    mapping(address => uint256) public totalBorrows;
-    mapping(address => uint256) public totalCollaterals;
-    mapping(address => mapping(address => uint256)) public totalBorrowsPerUser;
-    mapping(address => mapping(address => uint256)) public totalCollateralsPerUser;
+    mapping(bytes32 => uint256) public totalBorrows;
+    mapping(bytes32 => uint256) public totalCollaterals;
+    mapping(bytes32 => mapping(address => uint256)) public totalBorrowsPerUser;
+    mapping(bytes32 => mapping(address => uint256)) public totalCollateralsPerUser;
     
     // Events
     event BundleCreated(address indexed user, bytes32 indexed operationType, uint256 bundleSize);
@@ -49,6 +49,10 @@ contract MysticLeverageBundler is Ownable {
         bundler = IBundler3(_bundler);
         mysticAdapter = IMysticAdapter(_mysticAdapter);
         maverickAdapter = MaverickSwapAdapter(_maverickAdapter);
+    }
+
+    function getPairKey(address borrowToken, address collateralToken) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(borrowToken, collateralToken));
     }
 
     function createOpenLeverageBundle(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
@@ -75,6 +79,7 @@ contract MysticLeverageBundler is Ownable {
         uint256 collateralValue = inputAsset == collateralAsset ? initialCollateralAmount : getQuote(inputAsset, collateralAsset, initialCollateralAmount);
         uint256 positionSize = collateralValue * targetLeverage / SLIPPAGE_SCALE;
         uint256 borrowAmount = getQuote(collateralAsset, asset, positionSize - collateralValue);
+        bytes32 pairKey = getPairKey(asset, collateralAsset);
         
         Call[] memory mainBundle = new Call[](2);
         Call[] memory flashloanCallbackBundle = new Call[](5);
@@ -93,13 +98,13 @@ contract MysticLeverageBundler is Ownable {
 
         bundler.multicall(mainBundle);
 
-        totalBorrows[asset] += borrowAmount; 
-        totalCollaterals[collateralAsset] += positionSize;
-        totalBorrowsPerUser[asset][msg.sender] += borrowAmount; 
-        totalCollateralsPerUser[collateralAsset][msg.sender] += positionSize;
+        totalBorrows[pairKey] += borrowAmount; 
+        totalCollaterals[pairKey] += positionSize;
+        totalBorrowsPerUser[pairKey][msg.sender] += borrowAmount; 
+        totalCollateralsPerUser[pairKey][msg.sender] += positionSize;
         
         emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
-        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[collateralAsset], totalBorrows[asset]);
+        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
         
         return mainBundle;
     }
@@ -111,14 +116,15 @@ contract MysticLeverageBundler is Ownable {
         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
         uint256 ltv = mysticAdapter.getAssetLtv(collateralAsset);
         uint8 loop = 20;
+        bytes32 pairKey = getPairKey(asset, collateralAsset);
         require(ltv > 0, "Collateral asset has no LTV");
         
         Call[] memory mainBundle = new Call[](2+ loop*4);
         mainBundle[0] = _createERC20TransferFromCall(inputAsset,msg.sender,address(mysticAdapter),initialCollateralAmount);
         mainBundle[1] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
         uint256 newCollateral = initialCollateralAmount;
-        totalCollaterals[collateralAsset] += newCollateral;
-        totalCollateralsPerUser[collateralAsset][msg.sender] += newCollateral;
+        totalCollaterals[pairKey] += newCollateral;
+        totalCollateralsPerUser[pairKey][msg.sender] += newCollateral;
 
         for (uint8 i=0; i< loop; i++){
           uint256 idx = 2 + i * 4;
@@ -129,26 +135,26 @@ contract MysticLeverageBundler is Ownable {
 
           newCollateral = newCollateral * ltv / SLIPPAGE_SCALE;
           uint256 newBorrow = getQuote(collateralAsset, asset, newCollateral) * ltv / SLIPPAGE_SCALE;
-          totalBorrows[asset] += newBorrow; 
-          totalCollaterals[collateralAsset] += newCollateral;
-          totalBorrowsPerUser[asset][msg.sender] += newBorrow; 
-          totalCollateralsPerUser[collateralAsset][msg.sender] += newCollateral;
+          totalBorrows[pairKey] += newBorrow; 
+          totalCollaterals[pairKey] += newCollateral;
+          totalBorrowsPerUser[pairKey][msg.sender] += newBorrow; 
+          totalCollateralsPerUser[pairKey][msg.sender] += newCollateral;
           
-          uint leverage = (totalCollateralsPerUser[collateralAsset][msg.sender]) * SLIPPAGE_SCALE / (totalCollateralsPerUser[collateralAsset][msg.sender] - totalBorrowsPerUser[asset][msg.sender]);
+          uint leverage = (totalCollateralsPerUser[pairKey][msg.sender]) * SLIPPAGE_SCALE / (totalCollateralsPerUser[pairKey][msg.sender] - totalBorrowsPerUser[pairKey][msg.sender]);
           if (leverage >= (targetLeverage * 9000) / SLIPPAGE_SCALE) break; // break if leverage gotten is in similar range as expected 10% error margin 4 -> 3.6 is fine
         }
 
         bundler.multicall(mainBundle);
 
         emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
-        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[collateralAsset], totalBorrows[asset]);
+        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
         return mainBundle;
     }
 
     function createCloseLeverageBundle(address asset, address collateralAsset, uint256 debtToClose) external returns (Call[] memory bundle) {
-      // Determine how much debt to close
-      if(debtToClose == type(uint256).max || totalBorrowsPerUser[asset][msg.sender] <= debtToClose) {
-        debtToClose = totalBorrowsPerUser[asset][msg.sender];
+      bytes32 pairKey = getPairKey(asset, collateralAsset);
+      if(debtToClose == type(uint256).max || totalBorrowsPerUser[pairKey][msg.sender] <= debtToClose) {
+        debtToClose = totalBorrowsPerUser[pairKey][msg.sender];
       }
 
       require(debtToClose > 0, "no debt found");
@@ -164,10 +170,11 @@ contract MysticLeverageBundler is Ownable {
     function _createCloseLeverageBundleWithFlashloan(address asset, address collateralAsset, uint256 debtToClose) internal returns (Call[] memory bundle) {
         Call[] memory mainBundle = new Call[](5);
         Call[] memory flashloanCallbackBundle = new Call[](4);
+        bytes32 pairKey = getPairKey(asset, collateralAsset);
 
         uint256 debtToCover = debtToClose;
         uint totalBorrowAmount = debtToCover + mysticAdapter.flashLoanFee(debtToCover) + 1; // +1 for rounding buffer
-        uint256 collateralForRepayment = (totalCollateralsPerUser[collateralAsset][msg.sender] * debtToCover) / totalBorrowsPerUser[asset][msg.sender];
+        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * debtToCover) / totalBorrowsPerUser[pairKey][msg.sender];
                 
          // Compressed callback bundle creation
         flashloanCallbackBundle[0] = _createMysticRepayCall(asset, debtToCover, VARIABLE_RATE_MODE, msg.sender);
@@ -185,20 +192,21 @@ contract MysticLeverageBundler is Ownable {
         bundler.multicall(mainBundle);
 
         // Update tracking
-        totalBorrows[asset] -= debtToCover;
-        totalCollaterals[collateralAsset] -= collateralForRepayment;
-        totalBorrowsPerUser[asset][msg.sender] -= debtToCover;
-        totalCollateralsPerUser[collateralAsset][msg.sender] -= collateralForRepayment;
+        totalBorrows[pairKey] -= debtToCover;
+        totalCollaterals[pairKey] -= collateralForRepayment;
+        totalBorrowsPerUser[pairKey][msg.sender] -= debtToCover;
+        totalCollateralsPerUser[pairKey][msg.sender] -= collateralForRepayment;
         
         emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE"), mainBundle.length);
-        emit LeverageClosed(msg.sender, collateralAsset, asset, collateralForRepayment, totalCollaterals[collateralAsset], totalBorrows[asset]);
+        emit LeverageClosed(msg.sender, collateralAsset, asset, collateralForRepayment, totalCollaterals[pairKey], totalBorrows[pairKey]);
         
         return mainBundle;
     }
 
     function _createCloseLeverageBundleWithLoops(address asset, address collateralAsset, uint256 debtToClose) internal returns (Call[] memory bundle) {
-      uint256 collateralToWithdraw = (totalCollateralsPerUser[collateralAsset][msg.sender] * debtToClose) / totalBorrowsPerUser[asset][msg.sender];
-      uint256 leverage = (totalCollateralsPerUser[collateralAsset][msg.sender]) / (totalCollateralsPerUser[collateralAsset][msg.sender] - totalBorrowsPerUser[asset][msg.sender]);
+      bytes32 pairKey = getPairKey(asset, collateralAsset);
+      uint256 collateralToWithdraw = (totalCollateralsPerUser[pairKey][msg.sender] * debtToClose) / totalBorrowsPerUser[pairKey][msg.sender];
+      uint256 leverage = (totalCollateralsPerUser[pairKey][msg.sender]) / (totalCollateralsPerUser[pairKey][msg.sender] - totalBorrowsPerUser[pairKey][msg.sender]);
       uint256 ltv = mysticAdapter.getAssetLtv(collateralAsset);
       uint8 numLoops = 20;
       uint256 remainingDebt = debtToClose;
@@ -223,13 +231,13 @@ contract MysticLeverageBundler is Ownable {
       uint spentCollateral = getQuote(asset, collateralAsset, debtToClose - remainingDebt);
       bundler.multicall(mainBundle);
       
-      totalBorrows[asset] -= debtToClose - remainingDebt;
-      totalCollaterals[collateralAsset] -= spentCollateral;
-      totalBorrowsPerUser[asset][msg.sender] -= debtToClose - remainingDebt;
-      totalCollateralsPerUser[collateralAsset][msg.sender] -= spentCollateral;
+      totalBorrows[pairKey] -= debtToClose - remainingDebt;
+      totalCollaterals[pairKey] -= spentCollateral;
+      totalBorrowsPerUser[pairKey][msg.sender] -= debtToClose - remainingDebt;
+      totalCollateralsPerUser[pairKey][msg.sender] -= spentCollateral;
       
       emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE_LOOPS"), mainBundle.length);
-      emit LeverageClosed(msg.sender, collateralAsset, asset, collateralToWithdraw, totalCollaterals[collateralAsset], totalBorrows[asset]);
+      emit LeverageClosed(msg.sender, collateralAsset, asset, collateralToWithdraw, totalCollaterals[pairKey], totalBorrows[pairKey]);
       
       return mainBundle;
   }
@@ -243,10 +251,11 @@ contract MysticLeverageBundler is Ownable {
   ) external returns (Call[] memory bundle) {
       require(newTargetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
       require(newTargetLeverage <= 1000000, "Leverage too high"); // Max 100x
+      bytes32 pairKey = getPairKey(asset, collateralAsset);
       
       uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
-      uint256 currentCollateral = totalCollateralsPerUser[collateralAsset][msg.sender];
-      uint256 currentBorrow = totalBorrowsPerUser[asset][msg.sender];
+      uint256 currentCollateral = totalCollateralsPerUser[pairKey][msg.sender];
+      uint256 currentBorrow = totalBorrowsPerUser[pairKey][msg.sender];
 
       require(currentCollateral > 0 && currentBorrow > 0, "No existing position");
       uint256 currentLeverage = (currentCollateral * SLIPPAGE_SCALE) / (currentCollateral - currentBorrow);
@@ -263,7 +272,7 @@ contract MysticLeverageBundler is Ownable {
           // INCREASE LEVERAGE CASE
         uint256 additionalBorrowAmount = uint256(borrowDelta);
         uint totalBorrowAmount = additionalBorrowAmount + mysticAdapter.flashLoanFee(additionalBorrowAmount) + 1;
-        uint256 collateralForRepayment = (totalCollateralsPerUser[collateralAsset][msg.sender] * additionalBorrowAmount) / totalBorrowsPerUser[asset][msg.sender];
+        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * additionalBorrowAmount) / totalBorrowsPerUser[pairKey][msg.sender];
 
         mainBundle = new Call[](1);
         flashloanCallbackBundle = new Call[](5);
@@ -276,11 +285,12 @@ contract MysticLeverageBundler is Ownable {
 
         mainBundle[0] = _createMysticFlashloanCall(asset,additionalBorrowAmount,false,abi.encode(flashloanCallbackBundle));
         
-        totalBorrows[asset] += additionalBorrowAmount;
-        totalBorrowsPerUser[asset][msg.sender] += additionalBorrowAmount;
+        totalBorrows[pairKey] += additionalBorrowAmount;
+        totalBorrowsPerUser[pairKey][msg.sender] += additionalBorrowAmount;
+        require(totalBorrowsPerUser[pairKey][msg.sender] < totalCollateralsPerUser[pairKey][msg.sender], "Leverage too high");
       } else if (borrowDelta < 0) {
         uint256 repayAmount = uint256(-borrowDelta);
-        uint256 collateralForRepayment = (totalCollateralsPerUser[collateralAsset][msg.sender] * repayAmount) / totalBorrowsPerUser[asset][msg.sender];
+        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * repayAmount) / totalBorrowsPerUser[pairKey][msg.sender];
           
         mainBundle = new Call[](5);
         flashloanCallbackBundle = new Call[](4);
@@ -297,8 +307,8 @@ contract MysticLeverageBundler is Ownable {
         mainBundle[3] = _createERC20TransferCall(collateralAsset,address(this), type(uint256).max);
         mainBundle[4] = _createERC20TransferFromCall(collateralAsset, address(this), msg.sender, type(uint256).max);
         
-        totalBorrows[asset] -= repayAmount;
-        totalBorrowsPerUser[asset][msg.sender] -= repayAmount;
+        totalBorrows[pairKey] -= repayAmount;
+        totalBorrowsPerUser[pairKey][msg.sender] -= repayAmount;
       } else {
           revert("No changes to position");
       }
@@ -306,7 +316,7 @@ contract MysticLeverageBundler is Ownable {
       bundler.multicall(mainBundle);
       
       emit BundleCreated(msg.sender, keccak256("UPDATE_LEVERAGE"), mainBundle.length);
-      emit LeverageUpdated(msg.sender, collateralAsset, asset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[collateralAsset], totalBorrows[asset]);
+      emit LeverageUpdated(msg.sender, collateralAsset, asset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
       
       return mainBundle;
   }

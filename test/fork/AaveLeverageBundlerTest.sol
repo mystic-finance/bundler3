@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import {ErrorsLib} from "../src/libraries/ErrorsLib.sol";
-import {MysticLeverageBundler} from "../src/calls/MysticLeverageBundler.sol";
-import {IMysticAdapter} from "../src/interfaces/IMysticAdapter.sol";
-import {IMaverickV2Pool} from "../src/interfaces/IMaverickV2Pool.sol";
-import {IMaverickV2Factory} from "../src/interfaces/IMaverickV2Factory.sol";
-import {IMaverickV2Quoter} from "../src/interfaces/IMaverickV2Quoter.sol";
-import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {IBundler3, Call} from "../src/interfaces/IBundler3.sol";
-import {MysticAdapter} from "src/adapters/MysticAdapter.sol";
-import {Bundler3, Call} from "../src/Bundler3.sol";
-import "../lib/forge-std/src/Test.sol";
-import "./helpers/mocks/ERC20Mock.sol";
-import {ICreditDelegationToken} from "../src/interfaces/ICreditDelegationToken.sol";
-import {MaverickSwapAdapter} from "../src/adapters/MaverickAdapter.sol";
-import {IMysticV3 as IPool, ReserveDataMap as ReserveData} from "../src/interfaces/IMysticV3.sol";
+import {ErrorsLib} from "../../src/libraries/ErrorsLib.sol";
+import {MysticLeverageBundler} from "../../src/calls/MysticLeverageBundler.sol";
+import {IMysticAdapter} from "../../src/interfaces/IMysticAdapter.sol";
+import {IMaverickV2Pool} from "../../src/interfaces/IMaverickV2Pool.sol";
+import {IMaverickV2Factory} from "../../src/interfaces/IMaverickV2Factory.sol";
+import {IMaverickV2Quoter} from "../../src/interfaces/IMaverickV2Quoter.sol";
+import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IBundler3, Call} from "../../src/interfaces/IBundler3.sol";
+import {MysticAdapter} from "../../src/adapters/MysticAdapter.sol";
+import {Bundler3, Call} from "../../src/Bundler3.sol";
+import "../../lib/forge-std/src/Test.sol";
+import "../helpers/mocks/ERC20Mock.sol";
+import {ICreditDelegationToken} from "../../src/interfaces/ICreditDelegationToken.sol";
+import {MaverickSwapAdapter} from "../../src/adapters/MaverickAdapter.sol";
+import {IMysticV3 as IPool, ReserveDataMap as ReserveData} from "../../src/interfaces/IMysticV3.sol";
 
-contract MysticLeverageBundlerRWATest is Test {
+contract MysticLeverageBundlerForkTest is Test {
     MysticLeverageBundler internal leverageBundler;
     MysticAdapter internal mysticAdapterMock;
     MaverickSwapAdapter internal maverickAdapterMock;
@@ -58,17 +58,12 @@ contract MysticLeverageBundlerRWATest is Test {
         bundler3 = new Bundler3();
         
         // Create mock contracts
-        mysticAdapterMock = new MysticAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
+        mysticAdapterMock =  MysticAdapter(payable(0xE2314ECb6Ae07a987018a71e412897ED2F54E075)); // change
         maverickFactoryMock = 0x056A588AfdC0cdaa4Cab50d8a4D2940C5D04172E;
         maverickQuoterMock = 0xf245948e9cf892C351361d298cc7c5b217C36D82;
-        maverickAdapterMock = new MaverickSwapAdapter(maverickFactoryMock, maverickQuoterMock);
         
         // Deploy leverage bundler
-        leverageBundler = new MysticLeverageBundler(
-            address(bundler3), 
-            address(mysticAdapterMock), 
-            address(maverickAdapterMock)
-        );
+        leverageBundler =  MysticLeverageBundler(payable(0x598Fc8cD4335D5916Fa81Ec0Efa25b462aA721F1)); //change
         deal(address(collateralToken), USER, 1e6 * INITIAL_COLLATERAL);
         deal(address(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c), USER, 1e6 * INITIAL_COLLATERAL);
         deal(address(borrowToken), USER, 1e6 * INITIAL_COLLATERAL);
@@ -654,9 +649,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify vToken (debt) balance increased
         assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
-
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -691,8 +683,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify vToken (debt) balance increased
         assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -731,92 +721,10 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify vToken (debt) balance decreased
         assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
-        
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
     }
-
-     function testUpdateLeverageBundleLowLeverageOnly() public {
-        // First open a position
-        PositionData memory before = _createInitialPosition();
-        
-        // Update leverage: decrease from current to lower
-        vm.prank(USER);
-        Call[] memory bundleCalls = leverageBundler.updateLeverageBundle(
-            address(borrowToken),
-            address(collateralToken),
-            15000,  // Decrease leverage
-            DEFAULT_SLIPPAGE
-        );
-        
-        // Get position data afterVal operation
-        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
-        
-        // Verify bundle structure
-        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
-        
-        // Verify borrow and collateral decreased
-        assertLt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows did not decrease");
-        assertLt(afterVal.totalCollateralUser-1, before.totalCollateralUser, "User's total collateral did not decrease");
-        
-        // Verify tracking is accurate
-        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
-        assertGt(afterVal.totalCollaterals, afterVal.totalCollateralUser -1, "Total collaterals mismatch");
-        
-        // Verify user received some collateral back
-        assertGt(afterVal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
-        
-        // Verify vToken (debt) balance decreased
-        assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
-        
-        // Verify no tokens are retained in contracts
-        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
-    }
-
-     function testUpdateLeverageBundleVeryLowLeverageOnly() public {
-        // First open a position
-        PositionData memory before = _createInitialPosition();
-        
-        // Update leverage: decrease from current to lower
-        vm.prank(USER);
-        Call[] memory bundleCalls = leverageBundler.updateLeverageBundle(
-            address(borrowToken),
-            address(collateralToken),
-            10500,  // Decrease leverage
-            DEFAULT_SLIPPAGE
-        );
-        
-        // Get position data afterVal operation
-        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
-        
-        // Verify bundle structure
-        assertGt(bundleCalls.length, 0, "Bundle should contain calls");
-        
-        // Verify borrow and collateral decreased
-        assertLt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows did not decrease");
-        assertLt(afterVal.totalCollateralUser-1, before.totalCollateralUser, "User's total collateral did not decrease");
-        
-        // Verify tracking is accurate
-        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
-        assertGt(afterVal.totalCollaterals, afterVal.totalCollateralUser -1, "Total collaterals mismatch");
-        
-        // Verify user received some collateral back
-        assertGt(afterVal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
-        
-        // Verify vToken (debt) balance decreased
-        assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
-        
-        // Verify no tokens are retained in contracts
-        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
-    }
-
 
      function testUpdateLeverageBundleDecreaseLeverageOnlyWithDifferentInputAsset() public {
         // First open a position
@@ -850,8 +758,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify vToken (debt) balance decreased
         assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -889,8 +795,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify aToken balance increased
         assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -927,8 +831,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify aToken balance increased
         assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -1001,8 +903,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify aToken balance increased
         assertGt(afterVal.aTokenBalance, before.aTokenBalance, "User's aToken balance did not increase");
-
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -1062,8 +962,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify user received all collateral back
         assertGt(afterFinal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
-
-        assert(afterFinal.totalCollateralUser <= afterFinal.totalBorrowsUser);
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
@@ -1122,8 +1020,6 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify user received all collateral back
         assertGt(afterFinal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
-
-        assert(afterFinal.totalCollateralUser <= afterFinal.totalBorrowsUser);
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));

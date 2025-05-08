@@ -76,11 +76,12 @@ contract MysticLeverageBundlerElixirTest is Test {
         vm.startPrank(USER);
         collateralToken.approve(address(mysticAdapterMock), type(uint256).max);
         borrowToken.approve(address(mysticAdapterMock), type(uint256).max);
-        ICreditDelegationToken(0x11bd44bab4FdeD37D0a2dEEeBC554406ad68552D).approveDelegation(address(mysticAdapterMock), type(uint128).max);
-        ICreditDelegationToken(0xF7a8921211913c43108D34277F0Be561b3C5392A).approveDelegation(address(mysticAdapterMock), type(uint128).max);
-        IERC20(0x744dcD914b090b1D5b78469a3e6336547B507b97).approve(address(mysticAdapterMock), type(uint128).max);
+        // ICreditDelegationToken(0x11bd44bab4FdeD37D0a2dEEeBC554406ad68552D).approveDelegation(address(mysticAdapterMock), type(uint128).max);
+        ICreditDelegationToken(0xA9b705D4719002030386fa83087c905Ca4c25eB2).approveDelegation(address(mysticAdapterMock), type(uint128).max);
+        IERC20(0xAf5aEAb2248415716569Be5d24FbE10b16590D6c).approve(address(mysticAdapterMock), type(uint128).max);
         IERC20(0xd1a7183708EF9706F3dD2d51B27a7e02a70F30fa).approve(address(mysticAdapterMock), type(uint128).max);
-        vm.stopPrank();
+        IERC20(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db).approve(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), type(uint128).max);
+        vm.stopPrank(); // 0xA9b705D4719002030386fa83087c905Ca4c25eB2
     }
     
     /**
@@ -103,10 +104,12 @@ contract MysticLeverageBundlerElixirTest is Test {
      * @return data The position data
      */
     function getPositionData(address user, address asset, address collateralAsset) internal view returns (PositionData memory data) {
-        data.totalBorrowsUser = leverageBundler.totalBorrowsPerUser(asset, user);
-        data.totalCollateralUser = leverageBundler.totalCollateralsPerUser(collateralAsset, user);
-        data.totalBorrows = leverageBundler.totalBorrows(asset);
-        data.totalCollaterals = leverageBundler.totalCollaterals(collateralAsset);
+        bytes32 pairKey = leverageBundler.getPairKey(asset, collateralAsset);
+        
+        data.totalBorrowsUser = leverageBundler.totalBorrowsPerUser(pairKey, user);
+        data.totalCollateralUser = leverageBundler.totalCollateralsPerUser(pairKey, user);
+        data.totalBorrows = leverageBundler.totalBorrows(pairKey);
+        data.totalCollaterals = leverageBundler.totalCollaterals(pairKey);
         
         (address aToken,) = getMysticTokens(collateralAsset);
         if (aToken != address(0)) {
@@ -122,6 +125,7 @@ contract MysticLeverageBundlerElixirTest is Test {
         data.bundlerTokenBalance = IERC20(collateralAsset).balanceOf(address(leverageBundler));
         data.adapterTokenBalance = IERC20(collateralAsset).balanceOf(address(mysticAdapterMock));
     }
+
 
     /**
      * @notice Verify that no tokens are retained in the contracts
@@ -516,7 +520,8 @@ contract MysticLeverageBundlerElixirTest is Test {
         assertGt(bundleCalls.length, 0, "Bundle should contain calls");
         
         // Verify position was completely closed
-        uint256 borrow = leverageBundler.totalBorrowsPerUser(address(borrowToken), USER);
+        bytes32 pairKey = leverageBundler.getPairKey(address(borrowToken), address(collateralToken));
+        uint256 borrow = leverageBundler.totalBorrowsPerUser(pairKey, USER);
         assertEq(borrow, 0, "Must be no borrows");
         assertEq(afterVal.totalBorrowsUser, 0, "User still has borrows");
         assertEq(afterVal.totalCollateralUser, 0, "User still has collateral in position");

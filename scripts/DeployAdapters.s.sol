@@ -45,17 +45,17 @@ contract DeployAdaptersAndBundler is Script {
         // console.log('Deployed MaverickSwapAdapter:', address(maverickAdapter));
 
         // // 3. Deploy Mystic Adapter
-        // MysticAdapter aaveAdapter = new MysticAdapter(
-        //     address(bundler),
-        //     AAVE_POOL_ADDRESS,
-        //     WNATIVE
-        // );
-        // console.log('Deployed MysticAdapter:', address(aaveAdapter));
+        MysticAdapter aaveAdapter = new MysticAdapter(
+            address(bundler),
+            AAVE_POOL_ADDRESS,
+            WNATIVE
+        );
+        console.log('Deployed MysticAdapter:', address(aaveAdapter));
 
         // 4. Deploy MysticLeverageBundler
         MysticLeverageBundler leverageBundler = new MysticLeverageBundler(
             address(bundler),
-            address(0x968A22e4CEdfE0Dd5e1aE4C6541Fa73f28da2b9f),
+            address(aaveAdapter),
             address(0x4bc5023204C67633c33A33cDBfFCb1FB14126c17)
         );
         console.log('Deployed MysticLeverageBundler:', address(leverageBundler));
@@ -66,10 +66,16 @@ contract DeployAdaptersAndBundler is Script {
         console.log("\n=== Deployment Summary ===");
         console.log("Bundler3:", address(bundler));
         // console.log("MaverickSwapAdapter:", address(maverickAdapter));
-        // console.log("MysticAdapter:", address(aaveAdapter));
+        console.log("MysticAdapter:", address(aaveAdapter));
         console.log("MysticLeverageBundler:", address(leverageBundler));
     }
 }
+
+
+
+// old
+// mystic adapter 0xE2314ECb6Ae07a987018a71e412897ED2F54E075
+// mystic leverage bundler 0x598Fc8cD4335D5916Fa81Ec0Efa25b462aA721F1
 
 // == Logs ==
 //   Deploying Mystic Leverage Components
