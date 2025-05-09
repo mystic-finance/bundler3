@@ -178,7 +178,7 @@ The system enables leveraged trading on Mystic Protocol using flash loans and Ma
 - Slippage protection on swaps
 - Position tracking and validation
 
-## Scope
+## Scope
 
 - src/calls/MysticLeverageBundler.sol
 - src/adapters/MysticAdapter.sol
