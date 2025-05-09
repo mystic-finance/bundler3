@@ -164,4 +164,6 @@ interface IMysticAdapter is IFlashLoanReceiver {
     function getMainUserAccountData(address user) external view returns (uint256, uint256, uint256, uint256, uint256);
 
     function getAssetLtv(address asset) external view returns (uint256);
+
+    function getAssetPrice(address asset) external view returns (uint256);
 } 

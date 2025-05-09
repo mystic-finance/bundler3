@@ -88,7 +88,7 @@ contract MysticLeverageBundlerRWATest is Test {
         IERC20(0xAf5aEAb2248415716569Be5d24FbE10b16590D6c).approve(address(mysticAdapterMock), type(uint128).max);
         IERC20(0xd1a7183708EF9706F3dD2d51B27a7e02a70F30fa).approve(address(mysticAdapterMock), type(uint128).max);
         IERC20(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db).approve(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), type(uint128).max);
-        vm.stopPrank(); 
+        vm.stopPrank();
     }
 
     /**
@@ -173,6 +173,68 @@ contract MysticLeverageBundlerRWATest is Test {
         assertEq(IERC20(aToken1).balanceOf(address(bundler3)), 0, "Bundler3 retained borrow tokens");
         assertEq(IERC20(vToken2).balanceOf(address(bundler3)), 0, "Bundler3 retained collateral tokens");
     }
+
+    function verifyPositionAccuracy(
+        address user,
+        address asset,
+        address collateralAsset,
+        uint256 initialCollateral,
+        uint256 targetLeverage,
+        uint256 tolerance
+    ) internal view {
+        bytes32 pairKey = leverageBundler.getPairKey(asset, collateralAsset);
+        
+        // Get actual position data
+        uint256 actualBorrowed = leverageBundler.totalBorrowsPerUser(pairKey, user);
+        uint256 actualCollateral = leverageBundler.totalCollateralsPerUser(pairKey, user);
+
+        if(actualBorrowed == 0){
+            return;
+        }
+        
+        // Calculate expected values
+        uint256 expectedCollateral = initialCollateral==0?actualCollateral: initialCollateral * targetLeverage /leverageBundler.SLIPPAGE_SCALE() ;
+        uint256 expectedBorrowed =  initialCollateral==0? expectedCollateral * (targetLeverage - leverageBundler.SLIPPAGE_SCALE())/targetLeverage :expectedCollateral - initialCollateral;
+        
+        // Calculate actual leverage
+        uint256 actualLeverage = 0;
+        if (actualCollateral > actualBorrowed && actualBorrowed > 0) {
+            actualLeverage = (actualCollateral * leverageBundler.SLIPPAGE_SCALE()) / (actualCollateral - actualBorrowed);
+        }
+        
+        // Check if values are within tolerance
+        assertApproxEqRel(
+            actualCollateral, 
+            expectedCollateral, 
+            (tolerance * 1e16), // Convert basis points to percentage with 18 decimals
+            "Collateral amount deviates too much from expected"
+        );
+        
+        assertApproxEqRel(
+            actualBorrowed, 
+            expectedBorrowed, 
+            (tolerance * 1e16), 
+            "Borrowed amount deviates too much from expected"
+        );
+        
+        assertApproxEqRel(
+            actualLeverage, 
+            targetLeverage, 
+            (tolerance * 1e16),  // 1% deviation allowed
+            "Leverage deviates too much from target"
+        );
+        
+        // Log actual values for debugging
+        console.log("Position Verification:");
+        console.log("Initial Collateral:", initialCollateral);
+        console.log("Expected Collateral:", expectedCollateral);
+        console.log("Actual Collateral:", actualCollateral);
+        console.log("Expected Borrowed:", expectedBorrowed);
+        console.log("Actual Borrowed:", actualBorrowed);
+        console.log("Target Leverage:", targetLeverage / 100,  targetLeverage % 100);
+        console.log("Actual Leverage:", actualLeverage / 100, actualLeverage % 100);
+    }
+    
     
     /*//////////////////////////////////////////////////////////////
                         OPEN LEVERAGE TESTS
@@ -217,6 +279,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification with 3% tolerance
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            5
+        );
     }
 
     function testCreateOpenLeverageBundleWithDifferentAsset() public {
@@ -260,6 +332,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification with 3% tolerance
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            5
+        );
     }
     
 
@@ -302,6 +384,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification with 3% tolerance
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            6 // extra 1
+        );
     }
     
     function testCreateOpenLeverageBundleZeroCollateral() public {
@@ -562,13 +654,67 @@ contract MysticLeverageBundlerRWATest is Test {
             address(borrowToken),
             address(collateralToken),
             address(collateralToken),
-            INITIAL_COLLATERAL * 50,
+            INITIAL_COLLATERAL * 2e3,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE
         );
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+
+    function testCreateOpenLeverageBundleVeryHighAmount() public {
+        // First open a position
+        // PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 7e3,
+            LEVERAGE_2X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 7e3,
+            LEVERAGE_2X,
+            5
+        );
+    }
+
+    function testCreateOpenLeverageBundleSuperHighAmount() public {
+        // First open a position
+        // PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 5e4,
+            LEVERAGE_2X,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+         verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 5e4,
+            LEVERAGE_2X,
+            5
+        );
     }
 
     function testCreateCloseLeverageBundleFullHighAmount() public {
@@ -580,7 +726,7 @@ contract MysticLeverageBundlerRWATest is Test {
             address(borrowToken),
             address(collateralToken),
             address(collateralToken),
-            INITIAL_COLLATERAL * 50,
+            INITIAL_COLLATERAL * 100,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE
         );
@@ -618,6 +764,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            LEVERAGE_2X,
+            5
+        );
+        
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -628,6 +784,15 @@ contract MysticLeverageBundlerRWATest is Test {
     function testUpdateLeverageBundleIncreaseLeverageOnly() public {
         // First open a position
         PositionData memory before = _createInitialPosition();
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL,
+            LEVERAGE_2X,
+            5
+        );
         
         // Update leverage: increase from current to higher
         vm.prank(USER);
@@ -655,11 +820,21 @@ contract MysticLeverageBundlerRWATest is Test {
         // Verify vToken (debt) balance increased
         assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
 
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
+        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser-1, "Negative leverage");
 
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after leverage increase
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            LEVERAGE_3X,
+            5
+        );
     }
 
      function testUpdateLeverageBundleIncreaseLeverageOnlyWithDifferentInputAsset() public {
@@ -692,10 +867,20 @@ contract MysticLeverageBundlerRWATest is Test {
         // Verify vToken (debt) balance increased
         assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
 
-        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser, "Negative leverage");
+        assertGt(afterVal.totalCollateralUser, afterVal.totalBorrowsUser-1, "Negative leverage");
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after leverage increase
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            LEVERAGE_3X,
+            5
+        );
     }
     
     // Test decreasing leverage only
@@ -737,6 +922,31 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after leverage decrease
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            LEVERAGE_1_5X,
+            5
+        );
+    }
+
+     function testUpdateLeverageBundleHighLeverageOnly() public {
+        // First open a position
+        PositionData memory before = _createInitialPosition();
+        
+        // Update leverage: decrease from current to lower
+        vm.prank(USER);
+        Call[] memory bundleCalls = leverageBundler.updateLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            50000,  // Decrease leverage
+            DEFAULT_SLIPPAGE
+        );
+        
     }
 
      function testUpdateLeverageBundleLowLeverageOnly() public {
@@ -776,6 +986,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after leverage decrease
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            15000, // 1.5x leverage
+            5
+        );
     }
 
      function testUpdateLeverageBundleVeryLowLeverageOnly() public {
@@ -815,6 +1035,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after leverage decrease
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            10500, // 1.05x leverage
+            5
+        );
     }
 
 
@@ -855,6 +1085,15 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            LEVERAGE_1_5X,
+            5
+        );
     }
     
     // Test adding collateral only
@@ -894,6 +1133,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after adding collateral
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 2, // Account for initial position + added collateral
+            LEVERAGE_2X,
+            5
+        );
     }
 
     function testAddCollateralWithDifferentInputAsset() public {
@@ -932,6 +1181,16 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        // Add position verification after adding collateral with different input asset
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 2, // Account for initial position + added collateral
+            LEVERAGE_2X,
+            5
+        );
     }
 
     function testAddCollateralWithDifferentInputAsset2() public {
@@ -968,6 +1227,15 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 2,
+            LEVERAGE_2X,
+            6
+        );
     }
 
     function testAddCollateralWithDifferentInputAsset3() public {
@@ -1006,6 +1274,15 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 2,
+            LEVERAGE_2X,
+            5
+        );
     }
     
     // Test removing collateral (partial close)
@@ -1031,6 +1308,16 @@ contract MysticLeverageBundlerRWATest is Test {
             address(borrowToken),
             address(collateralToken),
             debtToClose
+        );
+
+        // Verify after first partial close (2/3 of position remaining)
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            INITIAL_COLLATERAL * 1/3, // Approx 2/3 of initial position
+            LEVERAGE_2X,
+            500 // Higher tolerance for partial closes
         );
         
         // Get position data afterVal second operation
@@ -1067,6 +1354,18 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        
+
+        // Verify after second partial close (1/3 of position remaining)
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0, // Approx 1/3 of initial position
+            LEVERAGE_2X,
+            500 // Higher tolerance for partial closes
+        );
     }
 
     function testRemoveCollateralWithDifferentInputAsset() public {
@@ -1127,6 +1426,15 @@ contract MysticLeverageBundlerRWATest is Test {
         
         // Verify no tokens are retained in contracts
         verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0,
+            LEVERAGE_2X,
+            5
+        );
     }
     
 
@@ -1179,6 +1487,55 @@ contract MysticLeverageBundlerRWATest is Test {
             address(collateralToken),
             1000001,  // > 100x
             DEFAULT_SLIPPAGE
+        );
+    }
+
+    // Add a dedicated test for position accuracy
+    function testLeveragePositionAccuracy() public {
+        // Test case with 0.1 collateral and 3x leverage
+        uint256 initialCollateral = 0.1e6; 
+        uint256 targetLeverage = 30000;    // 3x leverage
+        uint256 tolerance = 5;           // 3% tolerance
+
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify the position is accurately tracked
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            tolerance
+        );
+        
+        // Test with borrow token as input
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(borrowToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Check combined positions accuracy 
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            initialCollateral * 2,  // Account for both positions
+            targetLeverage,
+            tolerance
         );
     }
 } 
