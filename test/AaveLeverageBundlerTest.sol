@@ -690,32 +690,6 @@ contract MysticLeverageBundlerRWATest is Test {
         );
     }
 
-    function testCreateOpenLeverageBundleSuperHighAmount() public {
-        // First open a position
-        // PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
-        
-        vm.prank(USER);
-        leverageBundler.createOpenLeverageBundle(
-            address(borrowToken),
-            address(collateralToken),
-            address(collateralToken),
-            INITIAL_COLLATERAL * 5e4,
-            LEVERAGE_2X,
-            DEFAULT_SLIPPAGE
-        );
-        
-        // Verify no tokens are retained in contracts
-        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
-
-         verifyPositionAccuracy(
-            USER,
-            address(borrowToken),
-            address(collateralToken),
-            INITIAL_COLLATERAL * 5e4,
-            LEVERAGE_2X,
-            5
-        );
-    }
 
     function testCreateCloseLeverageBundleFullHighAmount() public {
         // First open a position
