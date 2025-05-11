@@ -17,7 +17,7 @@ test-close-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwo
 test-leverage-fork-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest  -vvv --gas-report
 test-leverage-fork-new-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerElixirTest  -vvvvv --gas-report 
 
-test-leverage-fork-gas-report-specific :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest --mt testCreateOpenLeverageBundleVeryHighAmount  -vvvvv --gas-report 
+test-leverage-fork-gas-report-specific :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest --mt testRemoveCollateralWithDifferentInputAsset  -vvvvv --gas-report 
 
 
 test-update-leverage-fork-increase-leverage :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerTest --mt testUpdateLeverageBundleIncreaseLeverageOnly  -vvvvvvv

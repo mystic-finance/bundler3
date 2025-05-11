@@ -124,7 +124,7 @@ contract MysticLeverageBundler is Ownable {
         mainBundle[1] = _createMysticFlashloanCall(asset,borrowAmount,false,abi.encode(flashloanCallbackBundle));
 
         bundler.multicall(mainBundle);
-        updatePositionTracking(pairKey, borrowAmount, totalCollateralAmount, msg.sender, true);
+        updatePositionTracking(pairKey, totalBorrowAmount, totalCollateralAmount, msg.sender, true);
         
         emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
         emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
@@ -192,10 +192,10 @@ contract MysticLeverageBundler is Ownable {
         Call[] memory mainBundle = new Call[](5);
         Call[] memory flashloanCallbackBundle = new Call[](4);
         bytes32 pairKey = getPairKey(asset, collateralAsset);
-
         uint256 debtToCover = debtToClose;
-        uint totalBorrowAmount = debtToCover + mysticAdapter.flashLoanFee(debtToCover) + 1; // +1 for rounding buffer
-        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * debtToCover) / totalBorrowsPerUser[pairKey][msg.sender];
+        uint256 totalBorrowAmount = debtToCover + mysticAdapter.flashLoanFee(debtToCover) + 1; // +1 for rounding buffer, plus new fee
+        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * debtToClose) / totalBorrowsPerUser[pairKey][msg.sender];
+        collateralForRepayment = collateralForRepayment > totalCollateralsPerUser[pairKey][msg.sender]? totalCollateralsPerUser[pairKey][msg.sender]: collateralForRepayment; //safeguard to avoid overflow
                 
          // Compressed callback bundle creation
         flashloanCallbackBundle[0] = _createMysticRepayCall(asset, debtToCover, VARIABLE_RATE_MODE, msg.sender);
