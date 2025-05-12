@@ -9,7 +9,6 @@ import {MaverickSwapAdapter} from "../adapters/MaverickAdapter.sol";
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {MarketParams, IMorpho} from "../../lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MathRayLib} from "../libraries/MathRayLib.sol";
-// import {GeneralAdapter1, CoreAdapter} from "../adapters/GeneralAdapter1.sol";
 import {IOracle} from "../../lib/morpho-blue/src/interfaces/IOracle.sol";
 import {IGeneralAdapter1} from "../interfaces/IGeneralAdapter.sol";
 
@@ -80,13 +79,7 @@ contract MorphoLeverageBundler is Ownable {
         }
     }
 
-    function createOpenLeverageBundle(
-        MarketParams calldata marketParams,
-        address inputAsset,
-        uint256 initialCollateralAmount,
-        uint256 targetLeverage,
-        uint256 slippageTolerance
-    ) external returns (Call[] memory bundle) {
+    function createOpenLeverageBundle(MarketParams calldata marketParams, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
         require(initialCollateralAmount > 0, "Zero collateral amount");
         require(targetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
         require(targetLeverage <= 1000000, "Leverage too high");
@@ -97,13 +90,7 @@ contract MorphoLeverageBundler is Ownable {
         return _createOpenLeverageBundleWithFlashloan(marketParams, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
     }
 
-    function _createOpenLeverageBundleWithFlashloan(
-        MarketParams calldata marketParams,
-        address inputAsset,
-        uint256 initialCollateralAmount,
-        uint256 targetLeverage,
-        uint256 slippageTolerance
-    ) internal returns (Call[] memory bundle) {
+    function _createOpenLeverageBundleWithFlashloan(MarketParams calldata marketParams,address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
         address collateralAsset = marketParams.collateralToken;
         address borrowAsset = marketParams.loanToken;
         Call[] memory mainBundle = new Call[](2);
@@ -142,10 +129,7 @@ contract MorphoLeverageBundler is Ownable {
         return mainBundle;
     }
 
-    function createCloseLeverageBundle(
-        MarketParams calldata marketParams,
-        uint256 debtToClose
-    ) external returns (Call[] memory bundle) {
+    function createCloseLeverageBundle(MarketParams calldata marketParams, uint256 debtToClose) external returns (Call[] memory bundle) {
         bytes32 pairKey = getMarketPairKey(marketParams);
         if(debtToClose == type(uint256).max || totalBorrowsPerUser[pairKey][msg.sender] <= debtToClose) {
             debtToClose = totalBorrowsPerUser[pairKey][msg.sender];
@@ -154,10 +138,7 @@ contract MorphoLeverageBundler is Ownable {
         return _createCloseLeverageBundleWithFlashloan(marketParams, debtToClose);
     }
     
-    function _createCloseLeverageBundleWithFlashloan(
-        MarketParams calldata marketParams,
-        uint256 debtToClose
-    ) internal returns (Call[] memory bundle) {
+    function _createCloseLeverageBundleWithFlashloan(MarketParams calldata marketParams,uint256 debtToClose) internal returns (Call[] memory bundle) {
         address collateralAsset = marketParams.collateralToken;
         address borrowAsset = marketParams.loanToken;
         bytes32 pairKey = getMarketPairKey(marketParams);
@@ -188,11 +169,7 @@ contract MorphoLeverageBundler is Ownable {
         return mainBundle;
     }
     
-    function updateLeverageBundle(
-        MarketParams calldata marketParams,
-        uint256 newTargetLeverage,
-        uint256 slippageTolerance
-    ) external returns (Call[] memory bundle) {
+    function updateLeverageBundle(MarketParams calldata marketParams, uint256 newTargetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
         // Create appropriate bundles based on the operation type
         Call[] memory mainBundle;
         Call[] memory flashloanCallbackBundle;
@@ -247,116 +224,52 @@ contract MorphoLeverageBundler is Ownable {
         return mainBundle;
     }
     
-    function _createMorphoFlashloanCall(
-        address token,
-        uint256 amount,
-        bytes memory data
-    ) internal view returns (Call memory) {
+    function _createMorphoFlashloanCall(address token, uint256 amount,bytes memory data) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoFlashLoan, (token, amount, data)), 0, false, data.length == 0 ? bytes32(0) : keccak256(data));
     }
     
-    function _createMorphoSupplyCall(
-        MarketParams calldata marketParams,
-        uint256 assets,
-        uint256 shares,
-        uint256 maxSharePriceE27,
-        address onBehalf,
-        bytes calldata data
-    ) internal view returns (Call memory) {
+    function _createMorphoSupplyCall(MarketParams calldata marketParams, uint256 assets, uint256 shares, uint256 maxSharePriceE27, address onBehalf, bytes calldata data) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoSupply, (marketParams, assets, shares, maxSharePriceE27, onBehalf, data)), 0, false, bytes32(0));
     }
     
-    function _createMorphoSupplyCollateralCall(
-        MarketParams calldata marketParams,
-        uint256 assets,
-        address onBehalf
-    ) internal view returns (Call memory) {
+    function _createMorphoSupplyCollateralCall(MarketParams calldata marketParams, uint256 assets, address onBehalf) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoSupplyCollateral, (marketParams, assets, onBehalf, "")), 0, false, bytes32(0));
     }
     
-    function _createMorphoWithdrawCollateralCall(
-        MarketParams calldata marketParams,
-        uint256 assets,
-        address onBehalf,
-        address receiver
-    ) internal view returns (Call memory) {
+    function _createMorphoWithdrawCollateralCall(MarketParams calldata marketParams, uint256 assets, address onBehalf,address receiver) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoWithdrawCollateral, (marketParams, assets, onBehalf, receiver)), 0, false, bytes32(0));
     }
     
-    function _createMorphoBorrowCall(
-        MarketParams calldata marketParams,
-        uint256 assets,
-        uint256 shares,
-        uint256 minSharePriceE27,
-        address onBehalf,
-        address receiver
-    ) internal view returns (Call memory) {
+    function _createMorphoBorrowCall(MarketParams calldata marketParams, uint256 assets, uint256 shares, uint256 minSharePriceE27, address onBehalf, address receiver) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoBorrow, (marketParams, assets, shares, minSharePriceE27, onBehalf, receiver)), 0, false, bytes32(0));
     }
     
-    function _createMorphoRepayCall(
-        MarketParams calldata marketParams,
-        uint256 assets,
-        uint256 shares,
-        uint256 maxSharePriceE27,
-        address onBehalf
-    ) internal view returns (Call memory) {
+    function _createMorphoRepayCall(MarketParams calldata marketParams, uint256 assets, uint256 shares, uint256 maxSharePriceE27, address onBehalf) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoRepay, (marketParams, assets, shares, maxSharePriceE27, onBehalf, "")), 0, false, bytes32(0));
     }
     
-    function _createMorphoWithdrawCall(
-        MarketParams calldata marketParams,
-        uint256 assets,
-        uint256 shares,
-        uint256 minSharePriceE27,
-        address onBehalf,
-        address receiver
-    ) internal view returns (Call memory) {
+    function _createMorphoWithdrawCall(MarketParams calldata marketParams, uint256 assets, uint256 shares, uint256 minSharePriceE27, address onBehalf, address receiver) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.morphoWithdraw, (marketParams, assets, shares, minSharePriceE27, onBehalf, receiver)), 0, false, bytes32(0));
     }
     
-    function _createERC20ApproveCall(
-        address token,
-        address spender,
-        uint256 amount
-    ) internal view returns (Call memory) {
+    function _createERC20ApproveCall(address token, address spender, uint256 amount) internal view returns (Call memory) {
         return _call(token, abi.encodeCall(IERC20.approve, (spender, amount)), 0, false, bytes32(0));
     }
     
-    function _createERC20TransferCall(
-        address token,
-        address to,
-        uint256 amount
-    ) internal view returns (Call memory) {
+    function _createERC20TransferCall(address token,address to,uint256 amount) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.erc20Transfer, (token, to, amount)), 0, false, bytes32(0));
     }
     
-    function _createERC20TransferFromCall(
-        address token,
-        address from,
-        address to,
-        uint256 amount
-    ) internal view returns (Call memory) {
+    function _createERC20TransferFromCall(address token, address from, address to, uint256 amount) internal view returns (Call memory) {
         return _call(address(generalAdapter), abi.encodeCall(IGeneralAdapter1.erc20TransferFrom, (token, from, to, amount)), 0, false, bytes32(0));
     }
 
-    function getQuote(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn
-    ) internal returns (uint256) {
+    function getQuote(address tokenIn,address tokenOut, uint256 amountIn) internal returns (uint256) {
         require(tokenIn != address(0) && tokenOut != address(0), 'Invalid token address');
         return maverickAdapter.getSwapQuote(tokenIn, tokenOut, amountIn, false, 1e8);
     }
     
-    function _createMaverickSwapCall(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint256 amountOutMin,
-        uint256 slippage,
-        bool exactOutput
-    ) internal view returns (Call memory) {
+    function _createMaverickSwapCall(address tokenIn,address tokenOut, uint256 amountIn, uint256 amountOutMin, uint256 slippage, bool exactOutput) internal view returns (Call memory) {
         return _call(address(maverickAdapter), abi.encodeCall(MaverickSwapAdapter.swapExactTokensForTokens, (tokenIn, tokenOut, amountIn, amountOutMin, slippage, address(this), 1e8)), 0, false, bytes32(0));
     }
 
