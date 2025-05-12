@@ -10,11 +10,11 @@ contract IrmMock is IIrm {
     using MathLib for uint128;
 
     function borrowRateView(MarketParams memory, Market memory market) public pure returns (uint256) {
-        uint256 utilization = market.totalBorrowAssets.wDivDown(market.totalSupplyAssets);
+        // uint256 utilization = market.totalBorrowAssets.wDivDown(market.totalSupplyAssets);
 
         // Divide by the number of seconds in a year.
         // This is a very simple model where x% utilization corresponds to x% APR.
-        return utilization / 365 days;
+        return 1e18; //utilization / 365 days;
     }
 
     function borrowRate(MarketParams memory marketParams, Market memory market) external pure returns (uint256) {

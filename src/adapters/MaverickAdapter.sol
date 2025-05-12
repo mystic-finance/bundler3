@@ -55,7 +55,7 @@ contract MaverickSwapAdapter is Ownable {
             tickLimit: tickLimit
         });
         
-        (, uint256 amountOutReceived) = pool.swap{gas: 400_000}(to, swapParams, "");
+        (, uint256 amountOutReceived) = pool.swap{gas: 800_000}(to, swapParams, "");
         require(amountOutReceived >= amountOutMin, "Insufficient output amount");
         return amountOutReceived;
     }
@@ -72,7 +72,7 @@ contract MaverickSwapAdapter is Ownable {
         // int32 tickLimit = tokenAIn ? pool.getState().activeTick + tickRange : pool.getState().activeTick - tickRange;
         int32 tickLimit = tokenAIn ? type(int32).max : type(int32).min;
 
-        (, uint256 expectedAmount, ) = quoter.calculateSwap{gas: 400_000}(
+        (, uint256 expectedAmount, ) = quoter.calculateSwap{gas: 800_000}(
             pool,
             uint128(amountIn),
             tokenAIn,

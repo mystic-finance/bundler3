@@ -242,10 +242,14 @@ contract GeneralAdapter1 is CoreAdapter {
         uint256 assets,
         uint256 shares,
         uint256 minSharePriceE27,
+        address onBehalf,
         address receiver
     ) external onlyBundler3 {
+        address initiator = initiator();
+        if(onBehalf != address(0)) initiator = onBehalf;
+
         (uint256 borrowedAssets, uint256 borrowedShares) =
-            MORPHO.borrow(marketParams, assets, shares, initiator(), receiver);
+            MORPHO.borrow(marketParams, assets, shares, initiator, receiver);
 
         require(borrowedAssets.rDivDown(borrowedShares) >= minSharePriceE27, ErrorsLib.SlippageExceeded());
     }
@@ -305,6 +309,7 @@ contract GeneralAdapter1 is CoreAdapter {
         uint256 assets,
         uint256 shares,
         uint256 minSharePriceE27,
+        address onBehalf,
         address receiver
     ) external onlyBundler3 {
         if (shares == type(uint256).max) {
@@ -312,8 +317,10 @@ contract GeneralAdapter1 is CoreAdapter {
             require(shares != 0, ErrorsLib.ZeroAmount());
         }
 
+        address initiator = initiator();
+        if(onBehalf != address(0)) initiator = onBehalf;
         (uint256 withdrawnAssets, uint256 withdrawnShares) =
-            MORPHO.withdraw(marketParams, assets, shares, initiator(), receiver);
+            MORPHO.withdraw(marketParams, assets, shares, initiator, receiver);
 
         require(withdrawnAssets.rDivDown(withdrawnShares) >= minSharePriceE27, ErrorsLib.SlippageExceeded());
     }
@@ -324,14 +331,15 @@ contract GeneralAdapter1 is CoreAdapter {
     /// @param assets The amount of collateral to withdraw. Pass `type(uint).max` to withdraw the initiator's collateral
     /// balance.
     /// @param receiver The address that will receive the collateral assets.
-    function morphoWithdrawCollateral(MarketParams calldata marketParams, uint256 assets, address receiver)
+    function morphoWithdrawCollateral(MarketParams calldata marketParams, uint256 assets, address onBehalf, address receiver)
         external
         onlyBundler3
-    {
-        if (assets == type(uint256).max) assets = MorphoLib.collateral(MORPHO, marketParams.id(), initiator());
+    {   
+        address initiator = initiator();
+        if(onBehalf != address(0)) initiator = onBehalf;
         require(assets != 0, ErrorsLib.ZeroAmount());
 
-        MORPHO.withdrawCollateral(marketParams, assets, initiator(), receiver);
+        MORPHO.withdrawCollateral(marketParams, assets, initiator, receiver);
     }
 
     /// @notice Triggers a flash loan on Morpho.
@@ -368,12 +376,14 @@ contract GeneralAdapter1 is CoreAdapter {
     /// @notice Transfers ERC20 tokens from the initiator.
     /// @notice Initiator must have given sufficient allowance to the Adapter to spend their tokens.
     /// @param token The address of the ERC20 token to transfer.
+    /// @param from The address that will send the tokens overriding the initiator if needed.
     /// @param receiver The address that will receive the tokens.
     /// @param amount The amount of token to transfer. Pass `type(uint).max` to transfer the initiator's balance.
-    function erc20TransferFrom(address token, address receiver, uint256 amount) external onlyBundler3 {
+    function erc20TransferFrom(address token, address from, address receiver, uint256 amount) external onlyBundler3 {
         require(receiver != address(0), ErrorsLib.ZeroAddress());
 
         address initiator = initiator();
+        if(from != address(0)) initiator = from;
         if (amount == type(uint256).max) amount = IERC20(token).balanceOf(initiator);
 
         require(amount != 0, ErrorsLib.ZeroAmount());
