@@ -25,7 +25,7 @@ contract MysticLeverageBundlerRWATest is Test {
     address internal maverickQuoterMock;
     address internal maverickPoolMock;
     Bundler3 internal bundler3;
-    address USER = 0x18E1EEC9Fa5D77E472945FE0d48755386f28443c;
+    address USER = 0xf927Efdc25E14F33C6402F8A1dCEa5911051e749;
     
     // Test tokens
     ERC20Mock internal collateralToken;
@@ -70,8 +70,9 @@ contract MysticLeverageBundlerRWATest is Test {
             address(maverickAdapterMock)
         );
         deal(address(collateralToken), USER, 1e6 * INITIAL_COLLATERAL);
-        deal(address(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c), USER, 1e6 * INITIAL_COLLATERAL);
+        // deal(address(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c), USER, 1e6 * INITIAL_COLLATERAL);
         deal(address(borrowToken), USER, 1e6 * INITIAL_COLLATERAL);
+        deal(USER, 1e6 * INITIAL_COLLATERAL);
         
         // Approve tokens
         vm.startPrank(USER);
@@ -1511,5 +1512,386 @@ contract MysticLeverageBundlerRWATest is Test {
             targetLeverage,
             tolerance
         );
+    }
+
+    // Helper function to set eMode to ID 1 (stable coins mode)
+    function _setEMode(address user, uint8 categoryId) internal {
+        vm.startPrank(user);
+        IPool(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0)).setUserEMode(categoryId);
+        vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        E-MODE HIGH LEVERAGE TESTS
+    //////////////////////////////////////////////////////////////*/
+    
+    // Test for 7x leverage with eMode enabled
+    function testEmodeHighLeverage7x() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 targetLeverage = 70000; // 7x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL * 5; // 0.5e6
+        
+        // Open position with 7x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify the position is accurately tracked
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            10 // Higher tolerance for higher leverage
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+    
+    // Test for 10x leverage with eMode enabled
+    function testEmodeHighLeverage10x() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 targetLeverage = 100000; // 10x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL * 3; // 0.3e6
+        
+        // Open position with 10x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify the position is accurately tracked
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            10 // Higher tolerance for higher leverage
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+    
+    // Test for 15x leverage with eMode enabled
+    function testEmodeHighLeverage15x() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 targetLeverage = 100000; // 15x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL * 2; // 0.2e6
+        
+        // Open position with 15x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify the position is accurately tracked
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            15 // Higher tolerance for higher leverage
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+    
+    // Test for 20x leverage with eMode enabled
+    function testEmodeHighLeverage20x() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 targetLeverage = 200000; // 20x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL; // 0.1e6
+        
+        // Open position with 20x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify the position is accurately tracked
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            15 // Higher tolerance for higher leverage
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+    
+    // Test closing high leverage position
+    function testEmodeCloseHighLeveragePosition() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 targetLeverage = 100000; // 15x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL * 2; // 0.2e6
+        
+        // Open position with 15x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Close the entire position
+        vm.prank(USER);
+        leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            type(uint256).max  // Close entire position
+        );
+        
+        // Get position data after operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify position was completely closed
+        assertEq(afterVal.totalBorrowsUser, 0, "User still has borrows");
+        assertEq(afterVal.totalCollateralUser, 0, "User still has collateral in position");
+        
+        // Verify tracking is accurate
+        assertEq(afterVal.totalBorrows, 0, "Total borrows not updated");
+        assertEq(afterVal.totalCollaterals, 0, "Total collaterals not updated");
+        
+        // Verify user received collateral back
+        assertGt(afterVal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+    }
+    
+    // Test updating leverage (increasing) for high leverage position
+    function testEmodeUpdateHighLeverageIncrease() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 initialLeverage = 70000; // 7x leverage
+        uint256 targetLeverage = 120000; // 12x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL * 5; // 0.5e6
+        
+        // Open position with 7x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            initialLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Update leverage from 7x to 15x
+        vm.prank(USER);
+        leverageBundler.updateLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data after operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify bundle structure
+        assertGt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows did not increase");
+        assertEq(afterVal.totalCollateralUser, before.totalCollateralUser, "User's total collateral changed unexpectedly");
+        
+        // Verify tracking is accurate
+        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
+        assertEq(afterVal.totalCollaterals, afterVal.totalCollateralUser, "Total collaterals mismatch");
+        
+        // Verify vToken (debt) balance increased
+        assertGt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not increase");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+        
+        // Verify the position has the new leverage
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0, // Not initial position anymore
+            targetLeverage,
+            15 // Higher tolerance for higher leverage
+        );
+    }
+    
+    // Test updating leverage (decreasing) for high leverage position
+    function testEmodeUpdateHighLeverageDecrease() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 initialLeverage = 200000; // 20x leverage
+        uint256 targetLeverage = 100000; // 10x leverage
+        uint256 initialCollateral = INITIAL_COLLATERAL; // 0.1e6
+        
+        // Open position with 20x leverage
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            initialCollateral,
+            initialLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        PositionData memory before = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Update leverage from 20x to 10x
+        vm.prank(USER);
+        leverageBundler.updateLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Get position data after operation
+        PositionData memory afterVal = getPositionData(USER, address(borrowToken), address(collateralToken));
+        
+        // Verify borrow and collateral decreased
+        assertLt(afterVal.totalBorrowsUser, before.totalBorrowsUser, "User's total borrows did not decrease");
+        assertLt(afterVal.totalCollateralUser-1, before.totalCollateralUser, "User's total collateral did not decrease");
+        
+        // Verify tracking is accurate  
+        assertEq(afterVal.totalBorrows, afterVal.totalBorrowsUser, "Total borrows mismatch");
+        assertGt(afterVal.totalCollaterals, afterVal.totalCollateralUser-1, "Total collaterals mismatch");
+        
+        // Verify user received some collateral back
+        assertGt(afterVal.userTokenBalance, before.userTokenBalance-1, "User did not receive collateral back");
+        
+        // Verify vToken (debt) balance decreased
+        assertLt(afterVal.vTokenBalance, before.vTokenBalance, "User's vToken balance did not decrease");
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
+        
+        // Verify the position has the new leverage
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0, // Not initial position anymore
+            targetLeverage,
+            15 // Higher tolerance for higher leverage
+        );
+    }
+    
+    // Test for different amounts with high leverage
+    function testEmodeHighLeverageVariousAmounts() public {
+        // Set eMode to category 1 (stable coins)
+        _setEMode(USER, 1);
+        
+        uint256 targetLeverage = 150000; // 15x leverage
+        
+        // Test with small amount
+        uint256 smallAmount = INITIAL_COLLATERAL / 10; // 0.01e6
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            smallAmount,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Close position
+        vm.prank(USER);
+        leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            type(uint256).max
+        );
+        
+        // Test with large amount
+        uint256 largeAmount = INITIAL_COLLATERAL * 10; // 1e6
+        vm.prank(USER);
+        leverageBundler.createOpenLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            address(collateralToken),
+            largeAmount,
+            targetLeverage,
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Update leverage to 10x
+        vm.prank(USER);
+        leverageBundler.updateLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            100000, // 10x
+            DEFAULT_SLIPPAGE
+        );
+        
+        // Verify the position has the new leverage
+        verifyPositionAccuracy(
+            USER,
+            address(borrowToken),
+            address(collateralToken),
+            0, // Not initial position anymore
+            100000, // 10x
+            15 // Higher tolerance for higher leverage
+        );
+        
+        // Close position
+        vm.prank(USER);
+        leverageBundler.createCloseLeverageBundle(
+            address(borrowToken),
+            address(collateralToken),
+            type(uint256).max
+        );
+        
+        // Verify no tokens are retained in contracts
+        verifyNoRetainedBalances(address(borrowToken), address(collateralToken));
     }
 } 

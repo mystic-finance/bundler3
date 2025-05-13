@@ -266,6 +266,13 @@ contract MysticAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
         return amount;
     }
 
+    function getDerivateBalances(address user, address asset) public view returns (uint256, uint256) {
+        ReserveData memory reserveData = IPool(address(MYSTIC_POOL)).getReserveData(asset);
+        uint256 aTokenBalance = IERC20(reserveData.aTokenAddress).balanceOf(user);
+        uint256 vTokenBalance = IERC20(reserveData.variableDebtTokenAddress).balanceOf(user);
+        return (aTokenBalance, vTokenBalance);
+    }
+
     function rescueTokens(address token, address to, uint256 amount) external onlyOwner {
         IERC20(token).transfer(to, amount);
     }

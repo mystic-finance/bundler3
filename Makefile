@@ -12,7 +12,7 @@ deploy-script-deploy-adapter :; forge script scripts/DeployAdapters.s.sol:Deploy
 deploy-script-verify-adapter :; forge verify-contract 0xE2314ECb6Ae07a987018a71e412897ED2F54E075 src/adapters/MysticAdapter.sol:MysticAdapter --chain 98866 --verifier blockscout --rpc-url https://phoenix-rpc.plumenetwork.xyz --verifier-url https://explorer.plume.org/api? --watch
 
 
-test-open-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest --mt testUpdateLeverageBundleIncreaseLeverageOnly  -vvvvvvv
+test-open-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest --mt testCreateCloseLeverageBundle  -vvvvvvv
 test-close-leverage-fork :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerElixirTest --mt testCreateCloseLeverageBundle1  -vvvvvvv
 test-leverage-fork-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerRWATest  -vvv --gas-report
 test-leverage-fork-new-gas-report :; forge test --fork-url https://phoenix-rpc.plumenetwork.xyz --mc MysticLeverageBundlerElixirTest  -vvvvv --gas-report 
