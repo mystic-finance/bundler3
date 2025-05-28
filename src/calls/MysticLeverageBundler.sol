@@ -72,7 +72,7 @@ contract MysticLeverageBundler is Ownable {
         uint256 collateralPrice = mysticAdapter.getAssetPrice(collateralToken);
         uint256 ratio = (collateralPrice * SLIPPAGE_SCALE) / borrowPrice;
         require(ratio <= SLIPPAGE_SCALE + 500 && ratio >= SLIPPAGE_SCALE - 500, "Price deviation too high for safe leverage"); // 5% deviation allowed
-        return keccak256(abi.encodePacked(borrowToken, collateralToken, ratio));
+        return keccak256(abi.encodePacked(borrowToken, collateralToken));
     }
 
     function getDerivateBalances(address user, address asset) public view returns (uint256, uint256, uint256) {
@@ -181,6 +181,7 @@ contract MysticLeverageBundler is Ownable {
           
           uint leverage = (newCollateral * SLIPPAGE_SCALE) / (newCollateral - newBorrow);
           if (leverage >= (targetLeverage * 9000) / SLIPPAGE_SCALE) break; // break if leverage gotten is in similar range as expected 10% error margin 4 -> 3.6 is fine
+          require (leverage <= (targetLeverage * 12000) / SLIPPAGE_SCALE, "Leverage too high"); // 20% max overshoot of leverage
         }
         bundler.multicall(mainBundle);
         return mainBundle;
