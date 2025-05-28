@@ -153,4 +153,11 @@ interface IGeneralAdapter1 {
         uint256 amount, 
         address receiver
     ) external;
+
+    function erc20TransferFromWithSender(
+        address token, 
+        address from, 
+        address receiver, 
+        uint256 amount
+    ) external;
 }

@@ -391,6 +391,24 @@ contract GeneralAdapter1 is CoreAdapter {
         SafeERC20.safeTransferFrom(IERC20(token), initiator, receiver, amount);
     }
 
+    /// @notice Transfers ERC20 tokens from the initiator.
+    /// @notice Initiator must have given sufficient allowance to the Adapter to spend their tokens.
+    /// @param token The address of the ERC20 token to transfer.
+    /// @param from The address that will send the tokens overriding the initiator if needed.
+    /// @param receiver The address that will receive the tokens.
+    /// @param amount The amount of token to transfer. Pass `type(uint).max` to transfer the initiator's balance.
+    function erc20TransferFromWithSender(address token, address from, address receiver, uint256 amount) external onlyBundler3 {
+        require(receiver != address(0), ErrorsLib.ZeroAddress());
+
+        address initiator = initiator();
+        if(from != address(0)) initiator = from;
+        if (amount == type(uint256).max) amount = IERC20(token).balanceOf(initiator);
+
+        require(amount != 0, ErrorsLib.ZeroAmount());
+
+        SafeERC20.safeTransferFrom(IERC20(token), initiator, receiver, amount);
+    }
+
     /* WRAPPED NATIVE TOKEN ACTIONS */
 
     /// @notice Wraps native tokens to wNative.

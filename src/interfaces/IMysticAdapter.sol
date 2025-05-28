@@ -24,7 +24,7 @@ interface IMysticAdapter is IFlashLoanReceiver {
     /* IMMUTABLES */
 
     /// @notice The address of the Mystic V3 Pool contract.
-    function AAVE_POOL() external view returns (IPool);
+    function MYSTIC_POOL() external view returns (IPool);
 
     /// @dev The address of the wrapped native token.
     function WRAPPED_NATIVE() external view returns (IWNative);

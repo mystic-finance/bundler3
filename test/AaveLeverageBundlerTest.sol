@@ -61,7 +61,7 @@ contract MysticLeverageBundlerRWATest is Test {
         mysticAdapterMock = new MysticAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
         maverickFactoryMock = 0x056A588AfdC0cdaa4Cab50d8a4D2940C5D04172E;
         maverickQuoterMock = 0xf245948e9cf892C351361d298cc7c5b217C36D82;
-        maverickAdapterMock = new MaverickSwapAdapter(maverickFactoryMock, maverickQuoterMock);
+        maverickAdapterMock = new MaverickSwapAdapter(address(bundler3), maverickFactoryMock, maverickQuoterMock, address(1));
         
         // Deploy leverage bundler
         leverageBundler = new MysticLeverageBundler(
@@ -69,24 +69,26 @@ contract MysticLeverageBundlerRWATest is Test {
             address(mysticAdapterMock), 
             address(maverickAdapterMock)
         );
-        deal(address(collateralToken), USER, 1e6 * INITIAL_COLLATERAL);
-        deal(address(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c), USER, 1e6 * INITIAL_COLLATERAL);
-        deal(address(borrowToken), USER, 1e6 * INITIAL_COLLATERAL);
+        bundler3.updateBundler(address(leverageBundler), true);
+        deal(address(collateralToken), USER, 1e8 * INITIAL_COLLATERAL);
+        deal(address(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c), USER, 1e8 * INITIAL_COLLATERAL);
+        deal(address(borrowToken), USER, 1e8 * INITIAL_COLLATERAL);
+        deal(USER, 1e8 * INITIAL_COLLATERAL);
         
         // Approve tokens
         vm.startPrank(USER);
-        collateralToken.approve(address(mysticAdapterMock), type(uint256).max);
-        ERC20Mock(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c).approve(address(mysticAdapterMock), type(uint256).max);
-        borrowToken.approve(address(mysticAdapterMock), type(uint256).max);
-        ICreditDelegationToken(0xA9b705D4719002030386fa83087c905Ca4c25eB2).approveDelegation(address(mysticAdapterMock), type(uint128).max);
-        IERC20(0xAf5aEAb2248415716569Be5d24FbE10b16590D6c).approve(address(mysticAdapterMock), type(uint128).max);
-        IERC20(0xDb224c353CFB74e220b7B6cB12f8D8Bc7c8B2863).approve(address(mysticAdapterMock), type(uint128).max);
+        collateralToken.approve(address(leverageBundler), type(uint256).max);
+        ERC20Mock(0x9fbC367B9Bb966a2A537989817A088AFCaFFDC4c).approve(address(leverageBundler), type(uint256).max);
+        borrowToken.approve(address(leverageBundler), type(uint256).max);
+        ICreditDelegationToken(0xA9b705D4719002030386fa83087c905Ca4c25eB2).approveDelegation(address(leverageBundler), type(uint128).max);
+        IERC20(0xAf5aEAb2248415716569Be5d24FbE10b16590D6c).approve(address(leverageBundler), type(uint128).max);
+        IERC20(0xDb224c353CFB74e220b7B6cB12f8D8Bc7c8B2863).approve(address(leverageBundler), type(uint128).max);
         IERC20(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db).approve(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), type(uint128).max);
         // IPool(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0).supply(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db, INITIAL_COLLATERAL*1000, USER, 0);
         // IPool(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0)).setUserUseReserveAsCollateral(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db, true);
-        ICreditDelegationToken(0xA9b705D4719002030386fa83087c905Ca4c25eB2).approveDelegation(address(mysticAdapterMock), type(uint128).max);
-        IERC20(0xAf5aEAb2248415716569Be5d24FbE10b16590D6c).approve(address(mysticAdapterMock), type(uint128).max);
-        IERC20(0xd1a7183708EF9706F3dD2d51B27a7e02a70F30fa).approve(address(mysticAdapterMock), type(uint128).max);
+        ICreditDelegationToken(0xA9b705D4719002030386fa83087c905Ca4c25eB2).approveDelegation(address(leverageBundler), type(uint128).max);
+        IERC20(0xAf5aEAb2248415716569Be5d24FbE10b16590D6c).approve(address(leverageBundler), type(uint128).max);
+        IERC20(0xd1a7183708EF9706F3dD2d51B27a7e02a70F30fa).approve(address(leverageBundler), type(uint128).max);
         IERC20(0x593cCcA4c4bf58b7526a4C164cEEf4003C6388db).approve(address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), type(uint128).max);
         vm.stopPrank();
     }
@@ -297,6 +299,8 @@ contract MysticLeverageBundlerRWATest is Test {
         uint256 initialUserBalance = collateralToken.balanceOf(USER);
         
         // Execute the open leverage function
+        uint balance = collateralToken.allowance(USER, address(leverageBundler));
+        console.log("balance", balance);
         vm.prank(USER);
         Call[] memory bundleCalls = leverageBundler.createOpenLeverageBundle(
             address(borrowToken),

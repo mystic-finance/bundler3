@@ -11,7 +11,8 @@ import {IMysticAdapter} from "../interfaces/IMysticAdapter.sol";
 import { IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ErrorsLib} from "../libraries/ErrorsLib.sol";
 import {MaverickSwapAdapter} from "../adapters/MaverickAdapter.sol";
-
+import {IAaveV3 as IPool, ReserveDataMap as ReserveData} from "../interfaces/IAaveV3.sol";
+import {IERC20Metadata} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title MysticLeverageBundler
@@ -34,6 +35,7 @@ contract MysticLeverageBundler is Ownable {
     mapping(bytes32 => uint256) public totalCollaterals;
     mapping(bytes32 => mapping(address => uint256)) public totalBorrowsPerUser;
     mapping(bytes32 => mapping(address => uint256)) public totalCollateralsPerUser;
+    mapping(bytes32 => mapping(address => uint256)) public leveragePerUser;
     
     // Events
     event BundleCreated(address indexed user, bytes32 indexed operationType, uint256 bundleSize);
@@ -48,7 +50,21 @@ contract MysticLeverageBundler is Ownable {
     ) Ownable(msg.sender) {
         bundler = IBundler3(_bundler);
         mysticAdapter = IMysticAdapter(_mysticAdapter);
-        maverickAdapter = MaverickSwapAdapter(_maverickAdapter);
+        maverickAdapter = MaverickSwapAdapter(payable(_maverickAdapter));
+    }
+
+    modifier modifyBalances(bytes32 pairKey, address asset, address collateralAsset, bool isOpen){
+        (, uint256 vTokenBalance, uint256 assetDecimals) = getDerivateBalances(msg.sender, asset);
+        (uint256 aTokenBalance, ,uint256 collateralDecimals) = getDerivateBalances(msg.sender, collateralAsset);
+        _;
+        (, uint256 vTokenBalanceAfter, ) = getDerivateBalances(msg.sender, asset);
+        (uint256 aTokenBalanceAfter, ,) = getDerivateBalances(msg.sender, collateralAsset);
+
+        if(isOpen){
+            updatePositionTracking(pairKey, vTokenBalanceAfter - vTokenBalance, aTokenBalanceAfter - aTokenBalance, msg.sender, isOpen, assetDecimals, collateralDecimals);
+        } else {
+            updatePositionTracking(pairKey, vTokenBalance - vTokenBalanceAfter, aTokenBalance - aTokenBalanceAfter, msg.sender, isOpen, assetDecimals, collateralDecimals);
+        }
     }
 
     function getPairKey(address borrowToken, address collateralToken) public view returns (bytes32) {
@@ -59,39 +75,56 @@ contract MysticLeverageBundler is Ownable {
         return keccak256(abi.encodePacked(borrowToken, collateralToken, ratio));
     }
 
-    function updatePositionTracking(bytes32 pairKey, uint256 borrowAmount, uint256 collateralAmount, address user, bool isOpen) internal {
+    function getDerivateBalances(address user, address asset) public view returns (uint256, uint256, uint256) {
+        ReserveData memory reserveData = IPool(address(mysticAdapter.MYSTIC_POOL())).getReserveData(asset);
+        uint256 aTokenBalance = IERC20(reserveData.aTokenAddress).balanceOf(user);
+        uint256 vTokenBalance = IERC20(reserveData.variableDebtTokenAddress).balanceOf(user);
+        uint256 decimals = IERC20Metadata(reserveData.aTokenAddress).decimals();
+        return (aTokenBalance, vTokenBalance, decimals);
+    }
+
+    function updatePositionTracking(bytes32 pairKey, uint256 borrowAmount, uint256 collateralAmount, address user, bool isOpen, uint256 assetDecimals, uint256 collateralDecimals) internal {
+        uint256 borrowDecimals = assetDecimals < 18 ? 18 - assetDecimals : 0;
+        collateralDecimals = collateralDecimals < 18 ? 18 - collateralDecimals : 0;
+    
         if (isOpen) {
             totalBorrows[pairKey] += borrowAmount;
             totalCollaterals[pairKey] += collateralAmount; 
             totalBorrowsPerUser[pairKey][user] += borrowAmount;
             totalCollateralsPerUser[pairKey][user] += collateralAmount;
-            require(totalBorrowsPerUser[pairKey][user] < totalCollateralsPerUser[pairKey][user],  "Leverage too high");
         } else {
             totalBorrows[pairKey] -= borrowAmount;
             totalCollaterals[pairKey] -= collateralAmount;
             totalBorrowsPerUser[pairKey][user] -= borrowAmount;
             totalCollateralsPerUser[pairKey][user] -= collateralAmount;
-            require(totalBorrowsPerUser[pairKey][user] <= totalCollateralsPerUser[pairKey][user],  "Leverage too high");
         }
+        uint256 borrowValue = totalBorrowsPerUser[pairKey][user] * (10 ** borrowDecimals); // normalize to 18 decimals
+        uint256 collateralValue = totalCollateralsPerUser[pairKey][user] * (10 ** collateralDecimals);
+        require(borrowValue < collateralValue || totalBorrowsPerUser[pairKey][user] == 0,  "Leverage too high");
     }
 
-    function createOpenLeverageBundle(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) external returns (Call[] memory bundle) {
+    function createOpenLeverageBundle(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) modifyBalances(getPairKey(asset, collateralAsset), asset, collateralAsset, true) external returns (Call[] memory mainBundle) {
       require(initialCollateralAmount > 0, "Zero collateral amount");
       require(targetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
       require(targetLeverage <= 1000000, "Leverage too high");
-      
       uint256 positionSize = initialCollateralAmount * targetLeverage / SLIPPAGE_SCALE;
-
       IERC20(collateralAsset).approve(address(mysticAdapter), type(uint256).max);
       IERC20(asset).approve(address(mysticAdapter), type(uint256).max);
+      bytes32 pairKey = getPairKey(asset, collateralAsset);
       
       // Check if there's enough liquidity for flashloan
       if (mysticAdapter.getAvailableLiquidity(asset) > positionSize) {
-          return _createOpenLeverageBundleWithFlashloan(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
+          mainBundle = _createOpenLeverageBundleWithFlashloan(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
       } else { // loop can still accomodate smaller leverages even with insufficient liqudiity in a pool, there will be a warning in the frontend though
-          return _createOpenLeverageBundleWithLoops(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
+          mainBundle = _createOpenLeverageBundleWithLoops(asset, collateralAsset, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance);
       }
+      leveragePerUser[pairKey][msg.sender] = targetLeverage;
+
+      emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
+      // emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
+      return mainBundle;
     }
+
     function _createOpenLeverageBundleWithFlashloan(address asset, address collateralAsset, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance) internal returns (Call[] memory bundle) {
         require(inputAsset == collateralAsset || inputAsset == asset, "Input asset must be the same as collateral asset or asset");
         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
@@ -101,16 +134,8 @@ contract MysticLeverageBundler is Ownable {
         bytes32 pairKey = getPairKey(asset, collateralAsset);
         
         Call[] memory mainBundle = new Call[](2);
-        Call[] memory flashloanCallbackBundle = new Call[](5);
+        Call[] memory flashloanCallbackBundle = new Call[](6);
         uint256 totalBorrowAmount = borrowAmount + mysticAdapter.flashLoanFee(borrowAmount) + 1; // +1 for rounding buffer
-        uint256 totalCollateralAmount = 0;  // this is meant to force accuracy of collateral (and reduce discrepancy due to swap output)
-        if (inputAsset == collateralAsset) {
-            // When input is collateral: direct calculation, Calculate total collateral after leverage (initial + converted borrowed)
-            totalCollateralAmount = collateralValue + getQuote(asset, collateralAsset, borrowAmount);
-        } else {
-            // When input is borrowing asset: calculate total borrowing first
-            totalCollateralAmount = getQuote(asset, collateralAsset, positionSize);
-        }
 
         // Compressed callback bundle creation
         flashloanCallbackBundle[0] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
@@ -118,17 +143,13 @@ contract MysticLeverageBundler is Ownable {
         flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
         flashloanCallbackBundle[3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
         flashloanCallbackBundle[4] = _createMysticBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(mysticAdapter));
+        flashloanCallbackBundle[5] = _createERC20TransferCall(asset, msg.sender, type(uint256).max);
 
         // Compressed main bundle creation
-        mainBundle[0] = inputAsset == collateralAsset ? _createERC20TransferFromCall(collateralAsset,msg.sender,address(this),initialCollateralAmount) : _createERC20TransferFromCall(asset,msg.sender,address(maverickAdapter),initialCollateralAmount);
-        mainBundle[1] = _createMysticFlashloanCall(asset,borrowAmount,false,abi.encode(flashloanCallbackBundle));
+        inputAsset == collateralAsset ? _createERC20TransferFromPureCall(collateralAsset,msg.sender,address(this),initialCollateralAmount) : _createERC20TransferFromPureCall(asset,msg.sender,address(maverickAdapter),initialCollateralAmount);
+        mainBundle[0] = _createMysticFlashloanCall(asset,borrowAmount,false,abi.encode(flashloanCallbackBundle));
 
         bundler.multicall(mainBundle);
-        updatePositionTracking(pairKey, totalBorrowAmount, totalCollateralAmount, msg.sender, true);
-        
-        emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
-        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
-        
         return mainBundle;
     }
 
@@ -143,11 +164,10 @@ contract MysticLeverageBundler is Ownable {
         require(ltv > 0, "Collateral asset has no LTV");
         
         Call[] memory mainBundle = new Call[](2+ loop*4);
-        mainBundle[0] = _createERC20TransferFromCall(inputAsset,msg.sender,address(mysticAdapter),initialCollateralAmount);
-        mainBundle[1] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
+        _createERC20TransferFromPureCall(inputAsset,msg.sender,address(mysticAdapter),initialCollateralAmount);
+        mainBundle[0] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
         uint256 newCollateral = initialCollateralAmount;
-        totalCollaterals[pairKey] += newCollateral;
-        totalCollateralsPerUser[pairKey][msg.sender] += newCollateral;
+        uint256 newBorrow = 0;
 
         for (uint8 i=0; i< loop; i++){
           uint256 idx = 2 + i * 4;
@@ -156,36 +176,33 @@ contract MysticLeverageBundler is Ownable {
           mainBundle[idx+2] = _createERC20TransferFromCall(collateralAsset, address(this), address(mysticAdapter), type(uint256).max);
           mainBundle[idx+3] = _createMysticSupplyCall( collateralAsset, type(uint256).max, msg.sender);
 
-          newCollateral = newCollateral * ltv / SLIPPAGE_SCALE;
-          uint256 newBorrow = getQuote(collateralAsset, asset, newCollateral) * ltv / SLIPPAGE_SCALE;
-          updatePositionTracking(pairKey, newBorrow, newCollateral, msg.sender, true);
+          newCollateral += newCollateral * ltv / SLIPPAGE_SCALE;
+          newBorrow += getQuote(collateralAsset, asset, newCollateral) * ltv / SLIPPAGE_SCALE;
           
-          uint leverage = (totalCollateralsPerUser[pairKey][msg.sender]) * SLIPPAGE_SCALE / (totalCollateralsPerUser[pairKey][msg.sender] - totalBorrowsPerUser[pairKey][msg.sender]);
+          uint leverage = (newCollateral * SLIPPAGE_SCALE) / (newCollateral - newBorrow);
           if (leverage >= (targetLeverage * 9000) / SLIPPAGE_SCALE) break; // break if leverage gotten is in similar range as expected 10% error margin 4 -> 3.6 is fine
         }
-        require(totalBorrowsPerUser[pairKey][msg.sender] < totalCollateralsPerUser[pairKey][msg.sender], "Leverage too high");
-
         bundler.multicall(mainBundle);
-
-        emit BundleCreated(msg.sender, keccak256("OPEN_LEVERAGE"), mainBundle.length);
-        emit LeverageOpened(msg.sender, collateralAsset, asset, initialCollateralAmount, targetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
         return mainBundle;
     }
 
-    function createCloseLeverageBundle(address asset, address collateralAsset, uint256 debtToClose) external returns (Call[] memory bundle) {
+    function createCloseLeverageBundle(address asset, address collateralAsset, uint256 debtToClose) modifyBalances(getPairKey(asset, collateralAsset), asset, collateralAsset, false) external returns (Call[] memory bundle) {
       bytes32 pairKey = getPairKey(asset, collateralAsset);
       if(debtToClose == type(uint256).max || totalBorrowsPerUser[pairKey][msg.sender] <= debtToClose) {
         debtToClose = totalBorrowsPerUser[pairKey][msg.sender];
       }
-
       require(debtToClose > 0, "no debt found");
-      
+
       // Check if there's enough liquidity for flashloan or if we're closing a small position
       if (mysticAdapter.getAvailableLiquidity(asset) > debtToClose) {
-        return _createCloseLeverageBundleWithFlashloan(asset, collateralAsset, debtToClose);
+        bundle = _createCloseLeverageBundleWithFlashloan(asset, collateralAsset, debtToClose);
       } else {
-        return _createCloseLeverageBundleWithLoops(asset, collateralAsset, debtToClose);
+        bundle = _createCloseLeverageBundleWithLoops(asset, collateralAsset, debtToClose);
       }
+
+      emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE"), bundle.length);
+      //emit LeverageClosed(msg.sender, collateralAsset, asset, collateralForRepayment, totalCollaterals[pairKey], totalBorrows[pairKey]);
+      return bundle;
     }
     
     function _createCloseLeverageBundleWithFlashloan(address asset, address collateralAsset, uint256 debtToClose) internal returns (Call[] memory bundle) {
@@ -205,16 +222,11 @@ contract MysticLeverageBundler is Ownable {
         // Compressed main bundle creation
         mainBundle[0] = _createMysticFlashloanCall(asset,debtToCover,false, abi.encode(flashloanCallbackBundle));
         mainBundle[1] = _createERC20TransferCall(asset, address(maverickAdapter), type(uint256).max);
-        mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , 0, false);
+        mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , DEFAULT_SLIPPAGE, false);
         mainBundle[3] = _createERC20TransferCall(collateralAsset, address(this), type(uint256).max);
         mainBundle[4] = _createERC20TransferFromCall(collateralAsset, address(this), msg.sender, type(uint256).max);
         
         bundler.multicall(mainBundle);
-        updatePositionTracking(pairKey, debtToCover, collateralForRepayment, msg.sender, false);
-
-        emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE"), mainBundle.length);
-        emit LeverageClosed(msg.sender, collateralAsset, asset, collateralForRepayment, totalCollaterals[pairKey], totalBorrows[pairKey]);
-        
         return mainBundle;
     }
 
@@ -232,7 +244,7 @@ contract MysticLeverageBundler is Ownable {
       for (uint8 i = 0; i < numLoops; i++) {
           uint256 baseIndex = i * 4;
           mainBundle[baseIndex + 0] = _createMysticWithdrawCall(collateralAsset, type(uint256).max, msg.sender, address(maverickAdapter));
-          mainBundle[baseIndex + 1] = _createMaverickSwapCall(collateralAsset, asset, type(uint256).max, 0, 0, false);
+          mainBundle[baseIndex + 1] = _createMaverickSwapCall(collateralAsset, asset, type(uint256).max, 0, DEFAULT_SLIPPAGE, false);
           mainBundle[baseIndex + 2] = _createERC20TransferFromCall(asset, address(this), address(mysticAdapter), type(uint256).max);
           mainBundle[baseIndex + 3] = _createMysticRepayCall(asset, type(uint256).max, VARIABLE_RATE_MODE, msg.sender);
           
@@ -242,13 +254,7 @@ contract MysticLeverageBundler is Ownable {
       }
       
       mainBundle[numLoops * 4] = _createMysticWithdrawCall(collateralAsset, type(uint256).max, msg.sender, msg.sender);
-      uint spentCollateral = getQuote(asset, collateralAsset, debtToClose - remainingDebt);
       bundler.multicall(mainBundle);
-      updatePositionTracking(pairKey, debtToClose - remainingDebt, spentCollateral, msg.sender, false);
-      
-      emit BundleCreated(msg.sender, keccak256("CLOSE_LEVERAGE_LOOPS"), mainBundle.length);
-      emit LeverageClosed(msg.sender, collateralAsset, asset, collateralToWithdraw, totalCollaterals[pairKey], totalBorrows[pairKey]);
-      
       return mainBundle;
   }
     
@@ -258,7 +264,7 @@ contract MysticLeverageBundler is Ownable {
       address collateralAsset,
       uint256 newTargetLeverage,
       uint256 slippageTolerance
-  ) external returns (Call[] memory bundle) {
+  ) external returns (Call[] memory bundle)  {
       require(newTargetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
       require(newTargetLeverage <= 1000000, "Leverage too high"); // Max 100x
       bytes32 pairKey = getPairKey(asset, collateralAsset);
@@ -270,6 +276,8 @@ contract MysticLeverageBundler is Ownable {
       uint256 currentLeverage = (currentCollateral * SLIPPAGE_SCALE) / (currentCollateral - currentBorrow);
       uint256 newBorow =  currentBorrow * (newTargetLeverage - SLIPPAGE_SCALE) * currentLeverage / (newTargetLeverage * (currentLeverage - SLIPPAGE_SCALE)); //getQuote(collateralAsset, asset, currentCollateral * (newTargetLeverage - SLIPPAGE_SCALE) / newTargetLeverage);
       int256 borrowDelta = int256(newBorow) - int256(currentBorrow);
+      (, uint256 vTokenBalance, ) = getDerivateBalances(msg.sender, asset);
+      (uint256 aTokenBalance, ,) = getDerivateBalances(msg.sender, collateralAsset);
       
       // Create appropriate bundles based on the operation type
       Call[] memory mainBundle;
@@ -289,7 +297,6 @@ contract MysticLeverageBundler is Ownable {
         flashloanCallbackBundle[4] = _createMysticBorrowCall(asset, totalBorrowAmount, VARIABLE_RATE_MODE, msg.sender, address(mysticAdapter));
 
         mainBundle[0] = _createMysticFlashloanCall(asset,additionalBorrowAmount,false,abi.encode(flashloanCallbackBundle));
-        updatePositionTracking(pairKey, additionalBorrowAmount, 0, msg.sender, true);
       } else if (borrowDelta < 0) {
         uint256 repayAmount = uint256(-borrowDelta);
         uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * repayAmount) / totalBorrowsPerUser[pairKey][msg.sender];
@@ -304,19 +311,27 @@ contract MysticLeverageBundler is Ownable {
         // Compressed main bundle creation
         mainBundle[0] = _createMysticFlashloanCall(asset,repayAmount,false, abi.encode(flashloanCallbackBundle));
         mainBundle[1] = _createERC20TransferCall(asset,address(maverickAdapter), type(uint256).max);
-        mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , 0, false);
+        mainBundle[2] = _createMaverickSwapCall(asset, collateralAsset, type(uint256).max, 0 , DEFAULT_SLIPPAGE, false);
         mainBundle[3] = _createERC20TransferCall(collateralAsset,address(this), type(uint256).max);
         mainBundle[4] = _createERC20TransferFromCall(collateralAsset, address(this), msg.sender, type(uint256).max);
-        updatePositionTracking(pairKey, repayAmount, 0, msg.sender, false);
       } else {
           revert("No changes to position");
       }
-      
+
       bundler.multicall(mainBundle);
+
+      (, uint256 vTokenBalanceAfter, uint256 assetDecimals) = getDerivateBalances(msg.sender, asset);
+      (uint256 aTokenBalanceAfter, ,uint256 collateralDecimals) = getDerivateBalances(msg.sender, collateralAsset);
+
+      if(borrowDelta > 0){
+        updatePositionTracking(pairKey, vTokenBalanceAfter - vTokenBalance, aTokenBalanceAfter - aTokenBalance, msg.sender, true, assetDecimals, collateralDecimals);
+      } else {
+        updatePositionTracking(pairKey, vTokenBalance - vTokenBalanceAfter, aTokenBalance - aTokenBalanceAfter, msg.sender, false, assetDecimals, collateralDecimals);
+      }
+      leveragePerUser[pairKey][msg.sender] = newTargetLeverage;
       
       emit BundleCreated(msg.sender, keccak256("UPDATE_LEVERAGE"), mainBundle.length);
-      emit LeverageUpdated(msg.sender, collateralAsset, asset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
-      
+      // emit LeverageUpdated(msg.sender, collateralAsset, asset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
       return mainBundle;
   }
     
@@ -411,6 +426,15 @@ contract MysticLeverageBundler is Ownable {
             address(token), abi.encodeCall(IERC20.transfer, (to, amount)), 0, false, bytes32(0)
         );
     }
+
+    function _createERC20TransferFromPureCall(
+        address token,
+        address from,
+        address to,
+        uint256 amount
+    ) internal returns (Call memory) {
+        require(IERC20(token).transferFrom(from, to, amount), "TransferFrom failed");
+    }
     
     function _createERC20TransferFromCall(
         address token,
@@ -460,6 +484,6 @@ contract MysticLeverageBundler is Ownable {
 
     function updateMaverickAdapter(address _newMaverickAdapter) external onlyOwner {
         require(_newMaverickAdapter != address(0), "Adapter address is zero");
-        maverickAdapter = MaverickSwapAdapter(_newMaverickAdapter);
+        maverickAdapter = MaverickSwapAdapter(payable(_newMaverickAdapter));
     }
 } 

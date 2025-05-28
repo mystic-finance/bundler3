@@ -25,7 +25,7 @@ contract MysticAdapter is CoreAdapter, Ownable, IFlashLoanReceiver {
     constructor(address bundler3, address mysticPool, address wNative) CoreAdapter(bundler3) Ownable(msg.sender) {
         require(mysticPool != address(0), ErrorsLib.ZeroAddress());
         require(wNative != address(0), ErrorsLib.ZeroAddress());
-
+        
         MYSTIC_POOL = IPool(mysticPool);
         WRAPPED_NATIVE = IWNative(wNative);
     }
