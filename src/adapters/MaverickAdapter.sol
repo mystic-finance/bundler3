@@ -8,7 +8,7 @@ import {IMaverickV2Quoter} from "../interfaces/IMaverickV2Quoter.sol";
 import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {CoreAdapter, ErrorsLib} from "./CoreAdapter.sol";
-import {ITellerPredicate, PredicateMessage} from "../interfaces/ITellerPredicate.sol";
+import {ITellerPredicate, PredicateMessage, ICrossChainTellerBase} from "../interfaces/ITellerPredicate.sol";
 
 /**
  * @title MaverickSwapAdapter
@@ -130,8 +130,14 @@ contract MaverickSwapAdapter is Ownable, CoreAdapter {
     // to be sure, decode the bytes data to get the minimum amount mint,  depositTokenContractAddress, etc with ITellerProxy
     function mintToken(bytes calldata data, address asset_, address collateralAsset_, address recipient_, uint256 amount_, uint256 minMint_) external onlyBundler3 returns (bytes memory){
        // decode the data with the iteller predeicate deposit function encoded
-        (IERC20 depositAsset, uint256 depositAmount, uint256 minimumMint, address recipient, address tellerAddress, PredicateMessage memory predicateMessage) = 
-            abi.decode(data, (IERC20, uint256, uint256, address, address, PredicateMessage));
+       bytes4 selector = bytes4(data[:4]);
+       require(
+            selector == ITellerPredicate.deposit.selector,
+            "Invalid function selector"
+        );
+
+        (IERC20 depositAsset, uint256 depositAmount, uint256 minimumMint, address recipient, ICrossChainTellerBase tellerAddress, PredicateMessage memory predicateMessage) = 
+            abi.decode(bytes(data[4:]), (IERC20, uint256, uint256, address, ICrossChainTellerBase, PredicateMessage));
         
         // add checks to make sure the data is valid
         require(address(depositAsset) == asset_, "Invalid deposit asset address");
