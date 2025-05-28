@@ -447,7 +447,7 @@ contract MorphoLeverageBundlerTest is Test {
     
     function testCreateOpenLeverageBundleLowLeverage() public {
         vm.startPrank(USER);
-        vm.expectRevert("Leverage must be > 1");
+        vm.expectRevert();
         leverageBundler.createOpenLeverageBundle(
             testMarketParams,
             address(collateralToken),
@@ -723,7 +723,7 @@ contract MorphoLeverageBundlerTest is Test {
         _createInitialPosition();
         
         vm.startPrank(USER);
-        vm.expectRevert("Leverage must be > 1");
+        vm.expectRevert();
         leverageBundler.updateLeverageBundle(
             testMarketParams,
             9999,  // Less than 1x

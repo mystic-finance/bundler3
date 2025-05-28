@@ -31,9 +31,12 @@ contract MorphoLeverageBundler is Ownable {
     
     // Constants
     uint256 public constant SLIPPAGE_SCALE = 10000; // 10000 = 100%
-    uint256 public constant DEFAULT_SLIPPAGE = 9500; // 95%, or 5% slippage allowance
+    uint256 public DEFAULT_SLIPPAGE = 9500; // 95%, or 5% slippage allowance
     uint256 public constant RAY = 1e27;
-    uint256 public constant SHARE_PRICE_SLIPPAGE = 300; // 3% slippage for share price
+    uint256 public constant SHARE_PRICE_SLIPPAGE = 500; // 5% slippage for share price
+    uint256 public MAX_LEVERAGE = 1000000; // 1000000 = 100X
+    uint256 public MIN_LEVERAGE = 10000; // 10000 = 1X
+    uint256 public MAX_DEVIATION = 500; // 500 = 5%
 
     // Position tracking
     mapping(bytes32 => uint256) public totalBorrows;
@@ -83,8 +86,8 @@ contract MorphoLeverageBundler is Ownable {
         // Allow for 5% deviation (500 basis points)
         uint256 baseRatio = 1e36;
         require(
-            priceRatio <= baseRatio + (baseRatio * 500 / SLIPPAGE_SCALE) && 
-            priceRatio >= baseRatio - (baseRatio * 500 / SLIPPAGE_SCALE), 
+            priceRatio <= baseRatio + (baseRatio * MAX_DEVIATION / SLIPPAGE_SCALE) && 
+            priceRatio >= baseRatio - (baseRatio * MAX_DEVIATION / SLIPPAGE_SCALE), 
             "Price deviation too high for safe leverage"
         ); // 5% deviation allowed
         return keccak256(abi.encodePacked(borrowToken, collateralToken));
@@ -112,8 +115,8 @@ contract MorphoLeverageBundler is Ownable {
 
     function createOpenLeverageBundle(MarketParams calldata marketParams, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance, bytes calldata data) modifyBalances(getMarketPairKey(marketParams), marketParams, true) external returns (Call[] memory bundle) {
         require(initialCollateralAmount > 0, "Zero collateral amount");
-        require(targetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
-        require(targetLeverage <= 1000000, "Leverage too high");
+        require(targetLeverage > MIN_LEVERAGE, "Leverage too low");
+        require(targetLeverage <= MAX_LEVERAGE, "Leverage too high");
         address collateralAsset = marketParams.collateralToken;
         address borrowAsset = marketParams.loanToken;  
         IERC20(collateralAsset).approve(address(generalAdapter), type(uint256).max);
@@ -211,8 +214,8 @@ contract MorphoLeverageBundler is Ownable {
         // Create appropriate bundles based on the operation type
         Call[] memory mainBundle;
         Call[] memory flashloanCallbackBundle;
-        require(newTargetLeverage > SLIPPAGE_SCALE, "Leverage must be > 1");
-        require(newTargetLeverage <= 1000000, "Leverage too high"); // Max 100
+        require(newTargetLeverage > MIN_LEVERAGE, "Leverage too low");
+        require(newTargetLeverage <= MAX_LEVERAGE, "Leverage too high"); // Max 100
         address collateralAsset = marketParams.collateralToken;
         address borrowAsset = marketParams.loanToken;
         bytes32 pairKey = getMarketPairKey(marketParams);
@@ -280,6 +283,22 @@ contract MorphoLeverageBundler is Ownable {
         emit BundleCreated(msg.sender, keccak256("UPDATE_LEVERAGE"), mainBundle.length);
         emit LeverageUpdated(msg.sender, collateralAsset, borrowAsset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
         return mainBundle;
+    }
+
+    function setLeverageTolerance(uint256 _minLeverage, uint256 _maxLeverage) external onlyOwner {
+        require(_minLeverage >= MIN_LEVERAGE, "Invalid min leverage");
+        require(_maxLeverage <= MAX_LEVERAGE, "Invalid max leverage");
+        MIN_LEVERAGE = _minLeverage;
+        MAX_LEVERAGE = _maxLeverage;
+    }
+
+    function setSlippageTolerance(uint256 _slippage) external onlyOwner {
+        require(_slippage <= SLIPPAGE_SCALE, "Invalid slippage");
+        DEFAULT_SLIPPAGE = _slippage;
+    }
+
+    function setDeviationTolerance(uint256 _deviation) external onlyOwner {
+        MAX_DEVIATION = _deviation;
     }
 
     function getMinBorrowSharePrice(MarketParams calldata marketParams) public view returns (uint256) {
