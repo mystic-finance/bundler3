@@ -61,7 +61,7 @@ contract MysticLeverageBundlerElixirTest is Test {
         mysticAdapterMock = new MysticAdapter(address(bundler3), address(0xCE192A6E105cD8dd97b8Dedc5B5b263B52bb6AE0), address(0xca59cA09E5602fAe8B629DeE83FfA819741f14be));
         maverickFactoryMock = 0x056A588AfdC0cdaa4Cab50d8a4D2940C5D04172E;
         maverickQuoterMock = 0xf245948e9cf892C351361d298cc7c5b217C36D82;
-        maverickAdapterMock = new MaverickSwapAdapter(address(bundler3), maverickFactoryMock, maverickQuoterMock, address(1));
+        maverickAdapterMock = new MaverickSwapAdapter(address(bundler3), maverickFactoryMock, maverickQuoterMock);
         
         // Deploy leverage bundler
         leverageBundler = new MysticLeverageBundler(

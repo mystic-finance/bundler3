@@ -5,7 +5,7 @@ import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IER
 import {IBundler3, Call} from "../interfaces/IBundler3.sol";
 import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {ErrorsLib} from "../libraries/ErrorsLib.sol";
-import {MaverickSwapAdapter} from "../adapters/MaverickAdapter.sol";
+import {SwapAdapter} from "../adapters/SwapAdapter.sol";
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {MarketParams, IMorpho, Position, Id, Market} from "../../lib/morpho-blue/src/interfaces/IMorpho.sol";
 import {MathRayLib} from "../libraries/MathRayLib.sol";
@@ -27,7 +27,7 @@ contract MorphoLeverageBundler is Ownable {
     // Bundler contract
     IBundler3 public immutable bundler;
     IGeneralAdapter1 public generalAdapter;
-    MaverickSwapAdapter public maverickAdapter;
+    SwapAdapter public maverickAdapter;
     
     // Constants
     uint256 public constant SLIPPAGE_SCALE = 10000; // 10000 = 100%
@@ -58,11 +58,13 @@ contract MorphoLeverageBundler is Ownable {
     ) Ownable(msg.sender) {
         bundler = IBundler3(_bundler);
         generalAdapter = IGeneralAdapter1(payable(_generalAdapter));
-        maverickAdapter = MaverickSwapAdapter(payable(_maverickAdapter));
+        maverickAdapter = SwapAdapter(payable(_maverickAdapter));
     }
 
     modifier modifyBalances(bytes32 pairKey, MarketParams calldata marketParams, bool isOpen){
+        _syncLeveragePosition(marketParams);
         Position memory positionBefore = generalAdapter.MORPHO().position(marketParams.id(), msg.sender);
+        // check if collateral has been taken out or loan added
         _;
         Position memory positionAfter = generalAdapter.MORPHO().position(marketParams.id(), msg.sender);
 
@@ -113,7 +115,7 @@ contract MorphoLeverageBundler is Ownable {
         require(borrowValue < collateralValue || totalBorrowsPerUser[pairKey][user] == 0,  "Leverage too high");
     }
 
-    function createOpenLeverageBundle(MarketParams calldata marketParams, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance, bytes calldata data) modifyBalances(getMarketPairKey(marketParams), marketParams, true) external returns (Call[] memory bundle) {
+    function createOpenLeverageBundle(MarketParams calldata marketParams, address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance, bool isMint) modifyBalances(getMarketPairKey(marketParams), marketParams, true) external returns (Call[] memory bundle) {
         require(initialCollateralAmount > 0, "Zero collateral amount");
         require(targetLeverage > MIN_LEVERAGE, "Leverage too low");
         require(targetLeverage <= MAX_LEVERAGE, "Leverage too high");
@@ -121,10 +123,10 @@ contract MorphoLeverageBundler is Ownable {
         address borrowAsset = marketParams.loanToken;  
         IERC20(collateralAsset).approve(address(generalAdapter), type(uint256).max);
         IERC20(borrowAsset).approve(address(generalAdapter), type(uint256).max);      
-        return _createOpenLeverageBundleWithFlashloan(marketParams, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance, data);
+        return _createOpenLeverageBundleWithFlashloan(marketParams, inputAsset, initialCollateralAmount, targetLeverage, slippageTolerance, isMint);
     }
 
-    function _createOpenLeverageBundleWithFlashloan(MarketParams calldata marketParams,address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance, bytes calldata data) internal returns (Call[] memory bundle) {
+    function _createOpenLeverageBundleWithFlashloan(MarketParams calldata marketParams,address inputAsset, uint256 initialCollateralAmount, uint256 targetLeverage, uint256 slippageTolerance, bool isMint) internal returns (Call[] memory bundle) {
         address collateralAsset = marketParams.collateralToken;
         address borrowAsset = marketParams.loanToken;
         Call[] memory mainBundle = new Call[](2);
@@ -133,23 +135,14 @@ contract MorphoLeverageBundler is Ownable {
         
         require(inputAsset == collateralAsset || inputAsset == borrowAsset, "Input asset must be collateral or loan asset");
         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
-        uint256 collateralValue = initialCollateralAmount;
-        uint256 positionSize = collateralValue * targetLeverage / SLIPPAGE_SCALE;
-        uint256 borrowAmount = positionSize - collateralValue;
+        uint256 positionSize = initialCollateralAmount * targetLeverage / SLIPPAGE_SCALE;
+        uint256 borrowAmount = positionSize - initialCollateralAmount;
         bytes32 pairKey = getMarketPairKey(marketParams);
-        uint256 minSharePrice = getMinBorrowSharePrice(marketParams);
-        
-        // if (inputAsset == collateralAsset) {
-        //     // When input is collateral: Calculate total collateral after leverage
-        //     totalCollateralAmount = collateralValue + getQuote(borrowAsset, collateralAsset, borrowAmount);
-        // } else {
-        //     // When input is borrowing asset: calculate total borrowing first
-        //     totalCollateralAmount = getQuote(borrowAsset, collateralAsset, positionSize);
-        // }
-        if (data.length > 0) {
+
+        if (isMint) {
             // mint message data is generated offchain due to kyc but sender in message must be maverick adapter
             // validation will be done to ensure all params are correct
-            flashloanCallbackBundle[1] = _createMaverickMintCall(data, borrowAsset, collateralAsset, address(this), borrowAmount, slippage);
+            flashloanCallbackBundle[1] = _createMaverickMintCall(borrowAsset, collateralAsset, address(this), type(uint256).max, borrowAmount);
         }else{
             flashloanCallbackBundle[1] = _createMaverickSwapCall(borrowAsset, collateralAsset, type(uint256).max, 0, slippage, false);
         }
@@ -158,7 +151,7 @@ contract MorphoLeverageBundler is Ownable {
         flashloanCallbackBundle[0] = _createERC20TransferCall(borrowAsset, address(maverickAdapter), type(uint256).max);
         flashloanCallbackBundle[2] = _createERC20TransferFromCall(collateralAsset, address(this), address(generalAdapter), type(uint256).max);
         flashloanCallbackBundle[3] = _createMorphoSupplyCollateralCall(marketParams, type(uint256).max, msg.sender);
-        flashloanCallbackBundle[4] = _createMorphoBorrowCall(marketParams, borrowAmount, 0, minSharePrice, msg.sender, address(generalAdapter));
+        flashloanCallbackBundle[4] = _createMorphoBorrowCall(marketParams, borrowAmount, 0, getMinBorrowSharePrice(marketParams), msg.sender, address(generalAdapter));
 
         // Create main bundle
         inputAsset == collateralAsset ? _createERC20TransferFromPureCall(collateralAsset, msg.sender, address(this), initialCollateralAmount) : _createERC20TransferFromPureCall(borrowAsset, msg.sender, address(maverickAdapter), initialCollateralAmount);
@@ -170,35 +163,37 @@ contract MorphoLeverageBundler is Ownable {
         return mainBundle;
     }
 
-    function createCloseLeverageBundle(MarketParams calldata marketParams, uint256 debtToClose) external modifyBalances(getMarketPairKey(marketParams), marketParams, false) returns (Call[] memory bundle) {
+    function createCloseLeverageBundle(MarketParams calldata marketParams, uint256 debtToClose, bool isMint) external modifyBalances(getMarketPairKey(marketParams), marketParams, false) returns (Call[] memory bundle) {
         bytes32 pairKey = getMarketPairKey(marketParams);
         if(debtToClose == type(uint256).max || totalBorrowsPerUser[pairKey][msg.sender] <= debtToClose) {
             debtToClose = totalBorrowsPerUser[pairKey][msg.sender];
         }
         require(debtToClose > 0, "No debt found");
-        return _createCloseLeverageBundleWithFlashloan(marketParams, debtToClose);
+        return _createCloseLeverageBundleWithFlashloan(marketParams, debtToClose, isMint);
     }
     
-    function _createCloseLeverageBundleWithFlashloan(MarketParams calldata marketParams,uint256 debtToClose) internal returns (Call[] memory bundle) {
+    function _createCloseLeverageBundleWithFlashloan(MarketParams calldata marketParams,uint256 debtToClose, bool isMint) internal returns (Call[] memory bundle) {
         address collateralAsset = marketParams.collateralToken;
         address borrowAsset = marketParams.loanToken;
         bytes32 pairKey = getMarketPairKey(marketParams);
         Call[] memory mainBundle = new Call[](5);
         Call[] memory flashloanCallbackBundle = new Call[](4);
-        uint256 maxSharePrice = getMaxRepaySharePrice(marketParams);
         
-        uint256 debtToCover = debtToClose;
-        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * debtToCover) / totalBorrowsPerUser[pairKey][msg.sender];
+        uint256 collateralForRepayment = (totalCollateralsPerUser[pairKey][msg.sender] * debtToClose) / totalBorrowsPerUser[pairKey][msg.sender];
         collateralForRepayment = collateralForRepayment > totalCollateralsPerUser[pairKey][msg.sender] ? totalCollateralsPerUser[pairKey][msg.sender] : collateralForRepayment; // Safety check
         
         // Callback bundle creation
-        flashloanCallbackBundle[0] = _createMorphoRepayCall(marketParams, debtToCover, 0, maxSharePrice, msg.sender);
+        if (isMint) {
+            flashloanCallbackBundle[2] = _createMaverickWithdrawCall(borrowAsset, collateralAsset, address(this), collateralForRepayment, debtToClose);
+        }else{
+           flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, borrowAsset, collateralForRepayment, debtToClose, 0, false);
+        }
+        flashloanCallbackBundle[0] = _createMorphoRepayCall(marketParams, debtToClose, 0, getMaxRepaySharePrice(marketParams), msg.sender);
         flashloanCallbackBundle[1] = _createMorphoWithdrawCollateralCall(marketParams, collateralForRepayment, msg.sender, address(maverickAdapter));
-        flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, borrowAsset, collateralForRepayment, debtToCover, 0, false);
         flashloanCallbackBundle[3] = _createERC20TransferFromCall(borrowAsset, address(this), address(generalAdapter), type(uint256).max);
         
         // Main bundle creation
-        mainBundle[0] = _createMorphoFlashloanCall(borrowAsset, debtToCover, abi.encode(flashloanCallbackBundle));
+        mainBundle[0] = _createMorphoFlashloanCall(borrowAsset, debtToClose, abi.encode(flashloanCallbackBundle));
         mainBundle[1] = _createERC20TransferCall(borrowAsset, address(maverickAdapter), type(uint256).max);
         mainBundle[2] = _createMaverickSwapCall(borrowAsset, collateralAsset, type(uint256).max, 0, 0, false);
         mainBundle[3] = _createERC20TransferCall(collateralAsset, address(this), type(uint256).max);
@@ -210,7 +205,7 @@ contract MorphoLeverageBundler is Ownable {
         return mainBundle;
     }
     
-    function updateLeverageBundle(MarketParams calldata marketParams, uint256 newTargetLeverage, uint256 slippageTolerance, bytes calldata data) external returns (Call[] memory bundle) {
+    function updateLeverageBundle(MarketParams calldata marketParams, uint256 newTargetLeverage, uint256 slippageTolerance, bool isMint) external returns (Call[] memory bundle) {
         // Create appropriate bundles based on the operation type
         Call[] memory mainBundle;
         Call[] memory flashloanCallbackBundle;
@@ -220,12 +215,10 @@ contract MorphoLeverageBundler is Ownable {
         address borrowAsset = marketParams.loanToken;
         bytes32 pairKey = getMarketPairKey(marketParams);
         uint256 slippage = slippageTolerance == 0 ? DEFAULT_SLIPPAGE : slippageTolerance;
-        uint256 currentCollateral = totalCollateralsPerUser[pairKey][msg.sender];
         uint256 currentBorrow = totalBorrowsPerUser[pairKey][msg.sender];
 
-        require(currentCollateral > 0 && currentBorrow > 0, "No existing position");
-        uint256 currentLeverage = leveragePerUser[pairKey][msg.sender];// (currentCollateral * SLIPPAGE_SCALE) / (currentCollateral - currentBorrow);
-        uint256 newBorrow = currentBorrow * (newTargetLeverage - SLIPPAGE_SCALE) * currentLeverage / (newTargetLeverage * (currentLeverage - SLIPPAGE_SCALE));
+        require(totalCollateralsPerUser[pairKey][msg.sender] > 0 && currentBorrow > 0, "No existing position");
+        uint256 newBorrow = currentBorrow * (newTargetLeverage - SLIPPAGE_SCALE) * leveragePerUser[pairKey][msg.sender] / (newTargetLeverage * (leveragePerUser[pairKey][msg.sender] - SLIPPAGE_SCALE));
         int256 borrowDelta = int256(newBorrow) - int256(currentBorrow);
         Position memory positionBefore = generalAdapter.MORPHO().position(marketParams.id(), msg.sender);
         
@@ -235,10 +228,8 @@ contract MorphoLeverageBundler is Ownable {
             flashloanCallbackBundle = new Call[](5);
             uint256 minSharePrice = getMinBorrowSharePrice(marketParams);
 
-            if (data.length > 0) {
-                // mint message data is generated offchain due to kyc but sender in message must be maverick adapter
-                // validation will be done to ensure all params are correct
-                flashloanCallbackBundle[1] = _createMaverickMintCall(data, borrowAsset, collateralAsset, address(this), additionalBorrowAmount, slippage);
+            if (isMint) {
+                flashloanCallbackBundle[1] = _createMaverickMintCall(borrowAsset, collateralAsset, address(this), type(uint256).max, additionalBorrowAmount);
             }else{
                 flashloanCallbackBundle[1] = _createMaverickSwapCall(borrowAsset, collateralAsset, type(uint256).max, 0, slippage, false);
             }
@@ -253,9 +244,14 @@ contract MorphoLeverageBundler is Ownable {
             mainBundle = new Call[](5);
             flashloanCallbackBundle = new Call[](4);
             uint256 maxSharePrice = getMaxRepaySharePrice(marketParams);
+
+            if (isMint) {
+                flashloanCallbackBundle[2] = _createMaverickWithdrawCall(borrowAsset, collateralAsset, address(this), collateralForRepayment, repayAmount);
+            }else{
+                flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, borrowAsset, collateralForRepayment, repayAmount, slippage, false);
+            }
             flashloanCallbackBundle[0] = _createMorphoRepayCall(marketParams, repayAmount, 0, maxSharePrice, msg.sender);
             flashloanCallbackBundle[1] = _createMorphoWithdrawCollateralCall(marketParams, collateralForRepayment, msg.sender, address(maverickAdapter));
-            flashloanCallbackBundle[2] = _createMaverickSwapCall(collateralAsset, borrowAsset, collateralForRepayment, repayAmount, 0, false);
             flashloanCallbackBundle[3] = _createERC20TransferFromCall(borrowAsset, address(this), address(generalAdapter), type(uint256).max);
             
             mainBundle[0] = _createMorphoFlashloanCall(borrowAsset, repayAmount, abi.encode(flashloanCallbackBundle));
@@ -270,19 +266,55 @@ contract MorphoLeverageBundler is Ownable {
         bundler.multicall(mainBundle);
 
         Position memory positionAfter = generalAdapter.MORPHO().position(marketParams.id(), msg.sender);
-        uint256 assetDecimals = IERC20Metadata(marketParams.loanToken).decimals();
-        uint256 collateralDecimals = IERC20Metadata(marketParams.collateralToken).decimals();
 
         if(borrowDelta > 0){
-            updatePositionTracking(pairKey, (positionAfter.borrowShares - positionBefore.borrowShares)/1e6, positionAfter.collateral - positionBefore.collateral, msg.sender, true, assetDecimals, collateralDecimals);
+            updatePositionTracking(pairKey, (positionAfter.borrowShares - positionBefore.borrowShares)/1e6, positionAfter.collateral - positionBefore.collateral, msg.sender, true, IERC20Metadata(marketParams.loanToken).decimals(), IERC20Metadata(marketParams.collateralToken).decimals());
         } else {
-            updatePositionTracking(pairKey, (positionBefore.borrowShares - positionAfter.borrowShares)/1e6, positionBefore.collateral - positionAfter.collateral, msg.sender, false, assetDecimals, collateralDecimals);
+            updatePositionTracking(pairKey, (positionBefore.borrowShares - positionAfter.borrowShares)/1e6, positionBefore.collateral - positionAfter.collateral, msg.sender, false, IERC20Metadata(marketParams.loanToken).decimals(), IERC20Metadata(marketParams.collateralToken).decimals());
         }
         leveragePerUser[pairKey][msg.sender] = newTargetLeverage;
 
         emit BundleCreated(msg.sender, keccak256("UPDATE_LEVERAGE"), mainBundle.length);
-        emit LeverageUpdated(msg.sender, collateralAsset, borrowAsset, currentCollateral, currentLeverage, newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
+        emit LeverageUpdated(msg.sender, collateralAsset, borrowAsset, totalCollateralsPerUser[pairKey][msg.sender], leveragePerUser[pairKey][msg.sender], newTargetLeverage, totalCollaterals[pairKey], totalBorrows[pairKey]);
         return mainBundle;
+    }
+
+    function syncLeveragePosition(MarketParams calldata marketParams) external {
+       _syncLeveragePosition(marketParams);
+    }
+
+    function _syncLeveragePosition(MarketParams calldata marketParams) internal { // ensure user position save is same with actual user positions
+        bytes32 pairKey = getMarketPairKey(marketParams);
+        Position memory position = generalAdapter.MORPHO().position(marketParams.id(), msg.sender);
+        uint256 currentCollateral = totalCollateralsPerUser[pairKey][msg.sender];
+        uint256 currentBorrow = totalBorrowsPerUser[pairKey][msg.sender];
+
+        totalBorrowsPerUser[pairKey][msg.sender] = position.borrowShares;
+        totalCollateralsPerUser[pairKey][msg.sender] = position.collateral;
+        // uint256 collateralDeficit;
+        // uint256 borrowDeficit;
+
+        // if(position.collateral < currentCollateral){ // collateral was withdrawn outside the leverage
+        //     collateralDeficit = currentCollateral - position.collateral;
+        //     totalCollaterals[pairKey] -= collateralDeficit; 
+        // }else{ // collateral was deposited outside the leverage
+        //     collateralDeficit = position.collateral - currentCollateral;
+        //     totalCollaterals[pairKey] += collateralDeficit; 
+        // }
+
+        // if(position.borrowShares < currentBorrow){ // borrow was repaid outside the leverage
+        //     borrowDeficit = currentBorrow - position.borrowShares;
+        //     totalBorrows[pairKey] -= borrowDeficit;
+        // }else{ // borrow was taken outside the leverage
+        //     borrowDeficit = position.borrowShares - currentBorrow;
+        //     totalBorrows[pairKey] += borrowDeficit;
+        // }
+
+        if(totalCollateralsPerUser[pairKey][msg.sender] > 0 && totalBorrowsPerUser[pairKey][msg.sender] > 0){
+            require(totalCollateralsPerUser[pairKey][msg.sender] > totalBorrowsPerUser[pairKey][msg.sender], "Collateral must be greater than borrow value");
+        }
+
+        leveragePerUser[pairKey][msg.sender] = totalCollateralsPerUser[pairKey][msg.sender] * SLIPPAGE_SCALE / (totalCollateralsPerUser[pairKey][msg.sender] - totalBorrowsPerUser[pairKey][msg.sender]);
     }
 
     function setLeverageTolerance(uint256 _minLeverage, uint256 _maxLeverage) external onlyOwner {
@@ -393,17 +425,25 @@ contract MorphoLeverageBundler is Ownable {
         if(slippage == 0){
             slippage = DEFAULT_SLIPPAGE;
         }
-        return _call(address(maverickAdapter), abi.encodeCall(MaverickSwapAdapter.swapExactTokensForTokens, (tokenIn, tokenOut, amountIn, amountOutMin, slippage, address(this), 1e8)), 0, false, bytes32(0));
+        return _call(address(maverickAdapter), abi.encodeCall(SwapAdapter.swapExactTokensForTokens, (tokenIn, tokenOut, amountIn, amountOutMin, slippage, address(this), 1e8)), 0, false, bytes32(0));
     }
 
-    function _createMaverickMintCall(bytes calldata data, address asset, address collateralAsset, address recipient, uint256 amount, uint256 slippage) internal view returns (Call memory) {
-        if(slippage == 0){
-            slippage = DEFAULT_SLIPPAGE;
-        }
-        uint256 minMint = amount * slippage / SLIPPAGE_SCALE;
-
-        return _call(address(maverickAdapter), abi.encodeCall(MaverickSwapAdapter.mintToken, (data, asset, collateralAsset, recipient, amount, minMint)), 0, false, bytes32(0));
+    function _createMaverickMintCall(address asset, address collateralAsset, address recipient, uint256 amount, uint256 minMint) internal view returns (Call memory) {
+        return _call(address(maverickAdapter), abi.encodeCall(SwapAdapter.mintToken, (asset, collateralAsset, recipient, amount, minMint)), 0, false, bytes32(0));
     }
+
+    function _createMaverickWithdrawCall(address asset, address collateralAsset, address recipient, uint256 amount, uint256 minWithdraw) internal view returns (Call memory) {
+        return _call(address(maverickAdapter), abi.encodeCall(SwapAdapter.withdrawToken, (asset, collateralAsset, recipient, amount, minWithdraw)), 0, false, bytes32(0));
+    }
+
+    // function _createMaverickWithdrawCall(address asset, address collateralAsset, address recipient, uint256 amount, uint256 slippage) internal view returns (Call memory) {
+    //     if(slippage == 0){
+    //         slippage = DEFAULT_SLIPPAGE;
+    //     }
+    //     uint256 minMint = amount * slippage / SLIPPAGE_SCALE;
+
+    //     return _call(address(maverickAdapter), abi.encodeCall(SwapAdapter.mintToken, (asset, collateralAsset, recipient, amount, minMint)), 0, false, bytes32(0));
+    // }
 
     function _call(address to, bytes memory data, uint256 value, bool skipRevert, bytes32 callbackHash)
         internal
@@ -421,6 +461,6 @@ contract MorphoLeverageBundler is Ownable {
 
     function updateMaverickAdapter(address _newMaverickAdapter) external onlyOwner {
         require(_newMaverickAdapter != address(0), "Adapter address is zero");
-        maverickAdapter = MaverickSwapAdapter(payable(_newMaverickAdapter));
+        maverickAdapter = SwapAdapter(payable(_newMaverickAdapter));
     }
 }

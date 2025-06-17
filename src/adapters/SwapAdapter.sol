@@ -8,23 +8,30 @@ import {IMaverickV2Quoter} from "../interfaces/IMaverickV2Quoter.sol";
 import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {CoreAdapter, ErrorsLib} from "./CoreAdapter.sol";
+import {ITellerPredicate, PredicateMessage, ICrossChainTellerBase} from "../interfaces/ITellerPredicate.sol";
+import {ITeller} from "../interfaces/ITeller.sol";
 /**
- * @title MaverickSwapAdapter
+ * @title SwapAdapter
  * @notice Adapter for interacting with Maverick V2 pools or minting nest tokens
  * @dev Handles token transfers and swap execution with smart balance management
  */
-contract MaverickSwapAdapter is Ownable, CoreAdapter {
+contract SwapAdapter is Ownable, CoreAdapter {
     using SafeERC20 for IERC20;
     
     IMaverickV2Factory public immutable factory;
     IMaverickV2Quoter public immutable quoter;
     mapping(address => mapping(address => address)) savedPools;
+    mapping(address => address) public tellerProxies;
     
     uint256 public constant SLIPPAGE_SCALE = 10000; // 10000 = 100%
+    ITellerPredicate public immutable TELLERPROXY;
     
-    constructor(address bundler3, address _factory, address _quoter) CoreAdapter(bundler3) Ownable(msg.sender) {
+    constructor(address bundler3, address _factory, address _quoter, address tellerProxy) CoreAdapter(bundler3) Ownable(msg.sender) {
         factory = IMaverickV2Factory(_factory);
         quoter = IMaverickV2Quoter(_quoter);
+        require(tellerProxy != address(0), ErrorsLib.ZeroAddress());
+
+        TELLERPROXY = ITellerPredicate(tellerProxy);
     }
 
     function swapExactTokensForTokens(
@@ -118,5 +125,41 @@ contract MaverickSwapAdapter is Ownable, CoreAdapter {
     
     function rescueTokens(address token, address to, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(to, amount);
+    }
+
+    function mintToken(address asset_, address collateralAsset_, address recipient_, uint256 amount_, uint256 minMint_) external onlyBundler3 returns (uint256){
+        address tellerProxy = tellerProxies[collateralAsset_];
+        require(tellerProxy != address(0), "Teller proxy not found");
+        uint256 balance = IERC20(asset_).balanceOf(address(this));
+        if (amount_ == type(uint256).max || amount_ > balance) {
+            amount_ = balance;
+        }
+        IERC20(asset_).approve(address(tellerProxy), amount_);
+        uint256 depositAmount = ITeller(tellerProxy).deposit(IERC20(asset_), amount_, minMint_);
+
+        // add checks to make sure the data is valid
+        require(depositAmount >= minMint_, "Deposit amount must be greater than amount");
+
+        // ensure we have enough balance of the deposit asset
+        uint256 balanceCollateral = IERC20(collateralAsset_).balanceOf(address(this));
+        require(balanceCollateral >= minMint_ && balanceCollateral >= depositAmount, "Insufficient collateral asset balance");
+
+        IERC20(collateralAsset_).transfer(recipient_, depositAmount);
+        return depositAmount;
+    }
+
+    function withdrawToken(address asset_, address collateralAsset_, address recipient_, uint256 amount_, uint256 minWithdraw_) external onlyBundler3 returns (uint256){
+        address tellerProxy = tellerProxies[collateralAsset_];
+        require(tellerProxy != address(0), "Teller proxy not found");
+        uint256 balance = IERC20(collateralAsset_).balanceOf(address(this));
+        if (amount_ == type(uint256).max || amount_ > balance) {
+            amount_ = balance;
+        }
+        IERC20(collateralAsset_).approve(address(tellerProxy), amount_);
+        uint256 withdrawAmount = ITeller(tellerProxy).bulkWithdraw(IERC20(asset_), amount_, minWithdraw_, recipient_);
+       
+        // add checks to make sure the data is valid
+        require(withdrawAmount >= minWithdraw_, "Withdraw amount must be greater than amount");
+        return withdrawAmount;
     }
 }

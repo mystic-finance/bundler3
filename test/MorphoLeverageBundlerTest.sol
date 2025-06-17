@@ -84,7 +84,7 @@ contract MorphoLeverageBundlerTest is Test {
         // Create mock contracts
         maverickFactoryMock = address(0x056A588AfdC0cdaa4Cab50d8a4D2940C5D04172E);
         maverickQuoterMock = address(0xf245948e9cf892C351361d298cc7c5b217C36D82);
-        maverickAdapterMock = new MaverickSwapAdapter(address(bundler3), maverickFactoryMock, maverickQuoterMock, address(1));
+        maverickAdapterMock = new MaverickSwapAdapter(address(bundler3), maverickFactoryMock, maverickQuoterMock);
 
         // vm.prank(0xb651FC348bb9AE07f84cc2B57bdB3528DfE1ADd2);
         // IMorphoBase(address(MORPHO)).enableIrm(address(irmMock));
@@ -363,7 +363,7 @@ contract MorphoLeverageBundlerTest is Test {
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -405,7 +405,7 @@ contract MorphoLeverageBundlerTest is Test {
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -440,7 +440,7 @@ contract MorphoLeverageBundlerTest is Test {
             0, // Zero collateral
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
     }
@@ -454,7 +454,7 @@ contract MorphoLeverageBundlerTest is Test {
             INITIAL_COLLATERAL,
             9999, // Less than 1x leverage
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
     }
@@ -468,7 +468,7 @@ contract MorphoLeverageBundlerTest is Test {
             INITIAL_COLLATERAL,
             1000001, // Too high leverage (>100x)
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
     }
@@ -487,7 +487,7 @@ contract MorphoLeverageBundlerTest is Test {
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -509,7 +509,7 @@ contract MorphoLeverageBundlerTest is Test {
             INITIAL_COLLATERAL,
             LEVERAGE_2X,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -530,7 +530,8 @@ contract MorphoLeverageBundlerTest is Test {
         vm.startPrank(USER);
         Call[] memory bundleCalls = leverageBundler.createCloseLeverageBundle(
             testMarketParams,
-            debtToClose
+            debtToClose,
+            false
         );
         vm.stopPrank();
         
@@ -559,7 +560,8 @@ contract MorphoLeverageBundlerTest is Test {
         vm.startPrank(USER);
         Call[] memory bundleCalls = leverageBundler.createCloseLeverageBundle(
             testMarketParams,
-            debtToClose
+            debtToClose,
+            false
         );
         vm.stopPrank();
         
@@ -588,7 +590,8 @@ contract MorphoLeverageBundlerTest is Test {
         vm.startPrank(USER);
         Call[] memory bundleCalls = leverageBundler.createCloseLeverageBundle(
             testMarketParams,
-            type(uint256).max  // Close entire position
+            type(uint256).max,  // Close entire position,
+            false
         );
         vm.stopPrank();
         
@@ -632,7 +635,7 @@ contract MorphoLeverageBundlerTest is Test {
             testMarketParams,
             LEVERAGE_3X,  // Increase leverage
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -672,7 +675,7 @@ contract MorphoLeverageBundlerTest is Test {
             testMarketParams,
             LEVERAGE_1_5X,  // Decrease leverage
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -714,7 +717,7 @@ contract MorphoLeverageBundlerTest is Test {
             testMarketParams,
             LEVERAGE_3X,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
     }
@@ -728,7 +731,7 @@ contract MorphoLeverageBundlerTest is Test {
             testMarketParams,
             9999,  // Less than 1x
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
     }
@@ -742,7 +745,7 @@ contract MorphoLeverageBundlerTest is Test {
             testMarketParams,
             1000001,  // > 100x
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
     }
@@ -763,7 +766,7 @@ contract MorphoLeverageBundlerTest is Test {
             initialCollateral,
             targetLeverage,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
@@ -786,7 +789,7 @@ contract MorphoLeverageBundlerTest is Test {
             initialCollateral,
             targetLeverage,
             DEFAULT_SLIPPAGE,
-            bytes("")
+            false
         );
         vm.stopPrank();
         
