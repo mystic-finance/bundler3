@@ -16,16 +16,32 @@ contract Bundler3 is IBundler3 {
 
     /// @notice The initiator of the multicall transaction.
     address public transient initiator;
+    mapping(address => bool) public bundlers;
+    address public owner;
 
     /// @notice Hash of the concatenation of the sender and the hash of the calldata of the next call to `reenter`.
     bytes32 public transient reenterHash;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    modifier onlyLeverage() {
+        require(bundlers[msg.sender], "not bundler");
+        _;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
 
     /* EXTERNAL */
 
     /// @notice Executes a sequence of calls.
     /// @dev Locks the initiator so that the sender can be identified by other contracts.
     /// @param bundle The ordered array of calldata to execute.
-    function multicall(Call[] calldata bundle) external payable {
+    function multicall(Call[] calldata bundle) external payable onlyLeverage {
         require(initiator == address(0), ErrorsLib.AlreadyInitiated());
 
         initiator = msg.sender;
@@ -65,5 +81,10 @@ contract Bundler3 is IBundler3 {
 
             require(reenterHash == bytes32(0), ErrorsLib.MissingExpectedReenter());
         }
+    }
+
+    function updateBundler(address _newBundler, bool _value) external onlyOwner {
+        require(_newBundler != address(0), "Adapter address is zero");
+        bundlers[_newBundler] = _value;
     }
 }

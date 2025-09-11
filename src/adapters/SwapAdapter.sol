@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+pragma solidity 0.8.28;
+
+import {IERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IMaverickV2Pool} from "../interfaces/IMaverickV2Pool.sol";
+import {IMaverickV2Factory} from "../interfaces/IMaverickV2Factory.sol";
+import {IMaverickV2Quoter} from "../interfaces/IMaverickV2Quoter.sol";
+import {Ownable} from "../../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+import {SafeERC20} from "../../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {CoreAdapter, ErrorsLib} from "./CoreAdapter.sol";
+import {ITellerPredicate, PredicateMessage, ICrossChainTellerBase} from "../interfaces/ITellerPredicate.sol";
+import {ITeller} from "../interfaces/ITeller.sol";
+/**
+ * @title SwapAdapter
+ * @notice Adapter for interacting with Maverick V2 pools or minting nest tokens
+ * @dev Handles token transfers and swap execution with smart balance management
+ */
+contract SwapAdapter is Ownable, CoreAdapter {
+    using SafeERC20 for IERC20;
+    
+    IMaverickV2Factory public immutable factory;
+    IMaverickV2Quoter public immutable quoter;
+    mapping(address => mapping(address => address)) savedPools;
+    mapping(address => address) public tellerProxies;
+    
+    uint256 public constant SLIPPAGE_SCALE = 10000; // 10000 = 100%
+    ITellerPredicate public immutable TELLERPROXY;
+    
+    constructor(address bundler3, address _factory, address _quoter, address tellerProxy) CoreAdapter(bundler3) Ownable(msg.sender) {
+        factory = IMaverickV2Factory(_factory);
+        quoter = IMaverickV2Quoter(_quoter);
+        require(tellerProxy != address(0), ErrorsLib.ZeroAddress());
+
+        TELLERPROXY = ITellerPredicate(tellerProxy);
+    }
+
+    function swapExactTokensForTokens(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        uint256 slippage,
+        address to,
+        int32 tickRange
+    ) external onlyBundler3 returns (uint256 amountOut) {
+        // Get the best pool for this pair
+        IMaverickV2Pool pool = getBestPool(tokenIn, tokenOut);
+        uint256 balance = IERC20(tokenIn).balanceOf(address(this));
+
+        if (amountIn == type(uint256).max || amountIn > balance) {
+            amountIn = balance;
+            amountOutMin = amountIn * slippage / SLIPPAGE_SCALE;
+        }
+        
+        IERC20(tokenIn).safeTransfer(address(pool), amountIn);
+        bool tokenAIn = address(pool.tokenA()) == tokenIn;
+        int32 tickLimit = tokenAIn ? pool.getState().activeTick + tickRange : pool.getState().activeTick - tickRange;
+        
+        IMaverickV2Pool.SwapParams memory swapParams = IMaverickV2Pool.SwapParams({
+            amount: amountIn,
+            tokenAIn: tokenAIn,
+            exactOutput: false,
+            tickLimit: tickLimit
+        });
+        
+        (, uint256 amountOutReceived) = pool.swap{gas: 500_000}(to, swapParams, "");
+        require(amountOutReceived >= amountOutMin, "Insufficient output amount");
+        return amountOutReceived;
+    }
+
+    function getSwapQuote(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        bool exactOutput,
+        int32 tickRange
+    ) external returns (uint256 expectedOut) {
+        IMaverickV2Pool pool = getBestPool(tokenIn, tokenOut);
+        bool tokenAIn = address(pool.tokenA()) == tokenIn;
+        int32 tickLimit = tokenAIn ? pool.getState().activeTick + tickRange : pool.getState().activeTick - tickRange;
+        // int32 tickLimit = tokenAIn ? type(int32).max : type(int32).min;
+
+        (, uint256 expectedAmount, ) = quoter.calculateSwap{gas: 500_000}(
+            pool,
+            uint128(amountIn),
+            tokenAIn,
+            exactOutput,
+            tickLimit
+        );
+        
+        return expectedAmount;
+    }
+    
+    function getBestPool(address tokenIn, address tokenOut) public view returns (IMaverickV2Pool) {
+        if (savedPools[tokenIn][tokenOut] != address(0)) {
+            return IMaverickV2Pool(savedPools[tokenIn][tokenOut]);
+        }
+        IMaverickV2Pool[] memory pools = factory.lookup(IERC20(tokenIn), IERC20(tokenOut), 0, 100);
+        require(pools.length > 0, "No pool available");
+        
+        IMaverickV2Pool bestPool = pools[0];
+        uint256 bestLiquidity = 0;
+        
+        for (uint64 i = 0; i < pools.length; i++) {
+            IMaverickV2Pool pool = pools[i];
+            uint256 liquidity = pool.getState().reserveA + pool.getState().reserveB;
+            
+            if (liquidity > bestLiquidity) {
+                bestLiquidity = liquidity;
+                bestPool = pool;
+            }
+        }
+        
+        return bestPool;
+    }
+
+    function addSavedPool(address tokenIn, address tokenOut, address pool) external onlyOwner {
+        require(
+        IMaverickV2Pool(pool).tokenA() == IERC20(tokenIn) &&
+            IMaverickV2Pool(pool).tokenB() == IERC20(tokenOut),
+        'Pool Tokens mismatch'
+        );
+        savedPools[tokenIn][tokenOut] = pool;
+    }
+    
+    function rescueTokens(address token, address to, uint256 amount) external onlyOwner {
+        IERC20(token).safeTransfer(to, amount);
+    }
+
+    function mintToken(address asset_, address collateralAsset_, address recipient_, uint256 amount_, uint256 minMint_) external onlyBundler3 returns (uint256){
+        address tellerProxy = tellerProxies[collateralAsset_];
+        require(tellerProxy != address(0), "Teller proxy not found");
+        uint256 balance = IERC20(asset_).balanceOf(address(this));
+        if (amount_ == type(uint256).max || amount_ > balance) {
+            amount_ = balance;
+        }
+        IERC20(asset_).approve(address(tellerProxy), amount_);
+        uint256 depositAmount = ITeller(tellerProxy).deposit(IERC20(asset_), amount_, minMint_);
+
+        // add checks to make sure the data is valid
+        require(depositAmount >= minMint_, "Deposit amount must be greater than amount");
+
+        // ensure we have enough balance of the deposit asset
+        uint256 balanceCollateral = IERC20(collateralAsset_).balanceOf(address(this));
+        require(balanceCollateral >= minMint_ && balanceCollateral >= depositAmount, "Insufficient collateral asset balance");
+
+        IERC20(collateralAsset_).transfer(recipient_, depositAmount);
+        return depositAmount;
+    }
+
+    function withdrawToken(address asset_, address collateralAsset_, address recipient_, uint256 amount_, uint256 minWithdraw_) external onlyBundler3 returns (uint256){
+        address tellerProxy = tellerProxies[collateralAsset_];
+        require(tellerProxy != address(0), "Teller proxy not found");
+        uint256 balance = IERC20(collateralAsset_).balanceOf(address(this));
+        if (amount_ == type(uint256).max || amount_ > balance) {
+            amount_ = balance;
+        }
+        IERC20(collateralAsset_).approve(address(tellerProxy), amount_);
+        uint256 withdrawAmount = ITeller(tellerProxy).bulkWithdraw(IERC20(asset_), amount_, minWithdraw_, recipient_);
+       
+        // add checks to make sure the data is valid
+        require(withdrawAmount >= minWithdraw_, "Withdraw amount must be greater than amount");
+        return withdrawAmount;
+    }
+}

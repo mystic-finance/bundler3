@@ -35,7 +35,7 @@ contract TransferAdapterLocalTest is LocalTest {
         amount = bound(amount, MIN_AMOUNT, MAX_AMOUNT);
 
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
-        generalAdapter1.erc20TransferFrom(address(loanToken), RECEIVER, amount);
+        generalAdapter1.erc20TransferFrom(address(loanToken), address(0), RECEIVER, amount);
     }
 
     function testTransferFromZeroAmount() public {

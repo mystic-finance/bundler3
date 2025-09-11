@@ -19,7 +19,6 @@ A bundle is a sequence of calls where each call is specified by:
 - `skipRevert`, a boolean indicating whether the multicall should revert if the call failed.
 - `callbackHash`, hash of the argument to the expected `reenter` (0 if no reentrance).
 
-
 Bundler3 also implements two specific features, their usage is described in the [Adapters subsection](#adapters):
 
 - the initial caller is transiently stored as `initiator` during the multicall;
@@ -95,7 +94,6 @@ For [Aave V2](./src/adapters/migration/AaveV2MigrationAdapter.sol), [Aave V3](./
     This prevents unwrapping by non-whitelisted initiators.
 - The [call fields](#bundle-call-fields) `skipRevert` (to skip failed actions) and `callbackHash` (to commit to callback contents) are new.
 
-
 ## Development
 
 Run tests with `forge test --chain <chainid>` (chainid can be 1 or 8453, 1 by default).
@@ -112,3 +110,81 @@ Source files are licensed under `GPL-2.0-or-later`, see [`LICENSE`](./LICENSE).
 
 - [Deployments](https://docs.morpho.org/addresses/#bundlers)
 - SDK: TBA.
+
+# Mystic Leverage System
+
+## Overview
+
+The system enables leveraged trading on Mystic Protocol using flash loans and Maverick DEX for swaps. It allows users to open, close, and adjust leveraged positions in a single transaction.
+
+## Core Components
+
+### 1. MysticLeverageBundler.sol
+
+- Main contract that orchestrates leveraged trading operations
+- Key features:
+  - Open leveraged positions using flash loans or iterative borrowing
+  - Close leveraged positions
+  - Update existing positions' leverage
+  - Tracks user positions and total system exposure
+  - Enforces safety limits (max leverage, price deviation checks)
+
+### 2. MysticAdapter.sol
+
+- Interface to Mystic Protocol (Aave V3 fork)
+- Handles core lending operations:
+  - Supply/withdraw collateral
+  - Borrow/repay assets
+  - Flash loan execution
+  - Position management (collateral settings)
+  - Price and liquidity queries
+  - Account health monitoring
+
+### 3. MaverickAdapter.sol
+
+- Interface to Maverick DEX for token swaps
+- Features:
+  - Token swaps with slippage protection
+  - Price quotes for swaps
+  - Best pool selection based on liquidity
+  - Gas-optimized swap execution
+
+## Key Concepts
+
+### Leverage Operations
+
+1. **Opening Positions**:
+
+   - User provides initial collateral
+   - System borrows additional assets via flash loan
+   - Swaps borrowed assets for more collateral
+   - Repeats process to achieve target leverage
+
+2. **Closing Positions**:
+
+   - Repays borrowed assets
+   - Withdraws collateral
+   - Swaps remaining assets back to original token
+
+3. **Updating Leverage**:
+   - Adjusts position size to match new target leverage
+   - Can increase or decrease exposure
+
+### Safety Features
+
+- Price deviation checks (5% max)
+- Maximum leverage limits
+- Health factor monitoring
+- Slippage protection on swaps
+- Position tracking and validation
+
+## Scope
+
+- src/calls/MysticLeverageBundler.sol
+- src/adapters/MysticAdapter.sol
+- src/adapters/MaverickAdapter.sol
+
+
+## new scope
+- core contracts are MorphoLeverageBundler.sol, SwapAdapter.sol, and Bundler3.sol
+- tests are at test/MorphoLeverageBundler.t.sol

@@ -241,7 +241,7 @@ contract MorphoAdapterLocalTest is LocalTest {
 
     function testWithdrawUnauthorized(uint256 withdrawnShares) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
-        generalAdapter1.morphoWithdraw(marketParams, 0, withdrawnShares, 0, RECEIVER);
+        generalAdapter1.morphoWithdraw(marketParams, 0, withdrawnShares, 0, address(0), RECEIVER);
     }
 
     function testWithdraw(uint256 privateKey, uint256 amount, uint256 withdrawnShares) public {
@@ -357,7 +357,7 @@ contract MorphoAdapterLocalTest is LocalTest {
 
     function testBorrowUnauthorized(uint256 borrowedAssets) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
-        generalAdapter1.morphoBorrow(marketParams, borrowedAssets, 0, 0, RECEIVER);
+        generalAdapter1.morphoBorrow(marketParams, borrowedAssets, 0, 0, address(0), RECEIVER);
     }
 
     function _testSupplyCollateralBorrow(address user, uint256 amount, uint256 collateralAmount) internal view {
@@ -433,7 +433,7 @@ contract MorphoAdapterLocalTest is LocalTest {
 
     function testWithdrawCollateralUnauthorized(uint256 collateralAmount) public {
         vm.expectRevert(ErrorsLib.UnauthorizedSender.selector);
-        generalAdapter1.morphoWithdrawCollateral(marketParams, collateralAmount, RECEIVER);
+        generalAdapter1.morphoWithdrawCollateral(marketParams, collateralAmount, address(0), RECEIVER);
     }
 
     function _testRepayWithdrawCollateral(address user, uint256 collateralAmount) internal view {

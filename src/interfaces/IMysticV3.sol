@@ -58,7 +58,7 @@ struct ReserveDataMap {
     uint128 isolationModeTotalDebt;
 }
 
-interface IAaveV3 {
+interface IMysticV3 {
     /**
      * @notice Mints an `amount` of aTokens to the `onBehalfOf`
      * @param asset The address of the underlying asset to mint

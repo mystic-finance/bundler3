@@ -239,7 +239,7 @@ abstract contract CommonTest is Test {
     }
 
     function _erc20TransferFrom(address token, address recipient, uint256 amount) internal view returns (Call memory) {
-        return _call(generalAdapter1, abi.encodeCall(GeneralAdapter1.erc20TransferFrom, (token, recipient, amount)));
+        return _call(generalAdapter1, abi.encodeCall(GeneralAdapter1.erc20TransferFrom, (token, address(0), recipient, amount)));
     }
 
     function _erc20TransferFrom(address token, uint256 amount) internal view returns (Call memory) {
@@ -369,7 +369,7 @@ abstract contract CommonTest is Test {
     ) internal view returns (Call memory) {
         return _call(
             generalAdapter1,
-            abi.encodeCall(GeneralAdapter1.morphoBorrow, (marketParams, assets, shares, minSharePriceE27, receiver))
+            abi.encodeCall(GeneralAdapter1.morphoBorrow, (marketParams, assets, shares, minSharePriceE27, address(0), receiver))
         );
     }
 
@@ -382,7 +382,7 @@ abstract contract CommonTest is Test {
     ) internal view returns (Call memory) {
         return _call(
             generalAdapter1,
-            abi.encodeCall(GeneralAdapter1.morphoWithdraw, (marketParams, assets, shares, slippageAmount, receiver))
+            abi.encodeCall(GeneralAdapter1.morphoWithdraw, (marketParams, assets, shares, slippageAmount, address(0), receiver))
         );
     }
 
@@ -422,7 +422,7 @@ abstract contract CommonTest is Test {
         returns (Call memory)
     {
         return _call(
-            generalAdapter1, abi.encodeCall(GeneralAdapter1.morphoWithdrawCollateral, (marketParams, assets, receiver))
+            generalAdapter1, abi.encodeCall(GeneralAdapter1.morphoWithdrawCollateral, (marketParams, assets, address(0), receiver))
         );
     }
 
